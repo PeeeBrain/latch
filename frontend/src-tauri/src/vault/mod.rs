@@ -5,6 +5,7 @@ pub mod provision;
 pub mod rotate;
 pub mod search;
 pub mod storage;
+pub mod totp;
 pub mod workspace;
 
 use serde::{Deserialize, Serialize};
@@ -19,6 +20,8 @@ pub struct Entry {
     pub password: String,
     pub url: Option<String>,
     pub icon_url: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub totp_secret: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -27,6 +30,7 @@ pub struct EntryPreview {
     pub title: String,
     pub username: String,
     pub icon_url: Option<String>,
+    pub has_totp: bool,
 }
 
 impl From<Entry> for EntryPreview {
@@ -36,6 +40,7 @@ impl From<Entry> for EntryPreview {
             title: entry.title,
             username: entry.username,
             icon_url: entry.icon_url,
+            has_totp: entry.totp_secret.is_some(),
         }
     }
 }

@@ -1,7 +1,8 @@
 import { useState, useEffect, useCallback } from 'react'
-import { Globe, User, Key } from 'lucide-react'
+import { Globe, User, Key, ShieldCheck } from 'lucide-react'
 import { api } from '../../api/client'
 import { fetchFavicon } from '../../utils/favicon'
+import { parseOtpAuthUri } from '../../utils/otpauth'
 import PaletteInput from '../PaletteInput'
 import { type PaletteMode, type CredentialPreview } from '../../api/types'
 
@@ -19,7 +20,8 @@ function AddCredential({ editEntry, prefillTitle, generatedPassword, onModeChang
     title: prefillTitle || '',
     username: '',
     password: '',
-    url: ''
+    url: '',
+    totpSecret: ''
   })
   const [error, setError] = useState('')
   const [loadedEdit, setLoadedEdit] = useState(false)
@@ -43,12 +45,23 @@ function AddCredential({ editEntry, prefillTitle, generatedPassword, onModeChang
         title: fullEntry.title,
         username: fullEntry.username,
         password: fullEntry.password,
-        url: fullEntry.url || ''
+        url: fullEntry.url || '',
+        totpSecret: ''
       })
       setLoadedEdit(true)
     } catch (error) {
       console.error('Failed to load entry for editing:', error)
     }
+  }
+
+  const handleTotpChange = (value: string) => {
+    const parsed = parseOtpAuthUri(value)
+    setFormData((prev) => ({
+      ...prev,
+      totpSecret: value,
+      title: prev.title || parsed?.title || '',
+      username: prev.username || parsed?.username || ''
+    }))
   }
 
   const handleSave = useCallback(async () => {
@@ -62,6 +75,7 @@ function AddCredential({ editEntry, prefillTitle, generatedPassword, onModeChang
     try {
       let iconUrl: string | undefined
       const url = formData.url.trim() || undefined
+      const totpSecret = formData.totpSecret.trim() || undefined
 
       if (url) {
         try {
@@ -82,6 +96,7 @@ function AddCredential({ editEntry, prefillTitle, generatedPassword, onModeChang
           password: formData.password,
           url,
           iconUrl,
+          totpSecret,
         })
       } else {
         await api.addEntry({
@@ -90,10 +105,11 @@ function AddCredential({ editEntry, prefillTitle, generatedPassword, onModeChang
           password: formData.password,
           url,
           iconUrl,
+          totpSecret,
         })
       }
 
-      setFormData({ title: '', username: '', password: '', url: '' })
+      setFormData({ title: '', username: '', password: '', url: '', totpSecret: '' })
       onCredentialsChanged()
       onModeChange('search')
     } catch (err) {
@@ -109,7 +125,7 @@ function AddCredential({ editEntry, prefillTitle, generatedPassword, onModeChang
         handleSave()
       } else if (e.key === 'Escape') {
         e.preventDefault()
-        setFormData({ title: '', username: '', password: '', url: '' })
+        setFormData({ title: '', username: '', password: '', url: '', totpSecret: '' })
         setLoadedEdit(false)
         onModeChange('search')
       }
@@ -145,6 +161,14 @@ function AddCredential({ editEntry, prefillTitle, generatedPassword, onModeChang
         onChange={(val) => setFormData({ ...formData, url: val })}
         placeholder={isEditing ? 'Edit website URL...' : 'Website URL (optional)...'}
         icon={Globe}
+      />
+      <PaletteInput
+        value={formData.totpSecret}
+        onChange={handleTotpChange}
+        placeholder={isEditing ? 'Edit 2FA secret or otpauth:// link (blank keeps current)...' : '2FA secret or otpauth:// link (optional)...'}
+        icon={ShieldCheck}
+        autoFocus={false}
+        hint={isEditing && editEntry?.has_totp ? '2FA SET' : undefined}
       />
       {error && <div className="px-3 py-3 bg-theme-danger border-b border-red-900/20 text-theme-text text-sm">{error}</div>}
       <div className="px-3 py-2 border-t-2 border-theme-accent bg-theme-bg flex items-center justify-evenly w-full">

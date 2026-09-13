@@ -9,6 +9,7 @@ export const CredentialSchema = z.object({
   password: z.string(),
   url: OptionalStringSchema,
   icon_url: OptionalStringSchema,
+  has_totp: z.boolean().optional(),
 })
 export type Credential = z.infer<typeof CredentialSchema>
 
@@ -59,6 +60,12 @@ export const FullEntryResponseSchema = z.object({
 export const AddEntryResponseSchema = z.object({
   status: z.literal('success'),
   id: z.string(),
+})
+
+export const TotpTokenResponseSchema = z.object({
+  status: z.literal('success'),
+  token: z.string(),
+  remaining_seconds: z.number(),
 })
 
 export const PasswordOptionsSchema = z.object({

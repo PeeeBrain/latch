@@ -2234,6 +2234,7 @@ dependencies = [
  "dotenvy",
  "fuzzy-matcher",
  "hex",
+ "hmac",
  "jsonwebtoken",
  "log",
  "pbkdf2",

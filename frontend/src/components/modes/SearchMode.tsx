@@ -3,8 +3,11 @@ import { Search, Lock } from 'lucide-react'
 import { useSearch } from '../../hooks/useSearch'
 import { useDebounce } from '../../hooks/useDebounce'
 import { useKeyboardNav } from '../../hooks/useKeyboardNav'
+import { useClipboardGuard } from '../../hooks/useClipboardGuard'
+import { api } from '../../api/client'
 import PaletteInput from '../PaletteInput'
 import PaletteList from '../PaletteList'
+import TOTPPreview from '../TOTPPreview'
 import { type PaletteMode, type CredentialPreview } from '../../api/types'
 
 interface SearchModeProps {
@@ -15,6 +18,7 @@ interface SearchModeProps {
 
 function SearchMode({ onModeChange, onLock, searchTrigger }: SearchModeProps) {
   const { searchResults, setSearchResults, isLoading, handleSearch } = useSearch()
+  const { copy } = useClipboardGuard()
   const [inputValue, setInputValue] = useState('')
   const [selectedIndex, setSelectedIndex] = useState(0)
   const [hoveredEntryId, setHoveredEntryId] = useState<string | null>(null)
@@ -51,6 +55,19 @@ function SearchMode({ onModeChange, onLock, searchTrigger }: SearchModeProps) {
     }
   }, [selectedIndex, searchResults])
 
+  const handleCopyTotp = useCallback(async () => {
+    const entry = searchResults.find((item) => item.id === hoveredEntryId)
+    if (!entry?.has_totp) {
+      return
+    }
+    try {
+      const { token } = await api.getTotpToken(entry.id)
+      await copy(token)
+    } catch (error) {
+      console.error('Failed to copy 2FA code:', error)
+    }
+  }, [hoveredEntryId, searchResults, copy])
+
   useEffect(() => {
     function handleKeyDown(e: KeyboardEvent) {
       if (e.shiftKey && e.key === 'Backspace' && hoveredEntryId) {
@@ -68,6 +85,9 @@ function SearchMode({ onModeChange, onLock, searchTrigger }: SearchModeProps) {
       } else if ((e.metaKey || e.ctrlKey) && e.key === 'h') {
         e.preventDefault()
         onModeChange('vault-health')
+      } else if ((e.metaKey || e.ctrlKey) && e.key === 't') {
+        e.preventDefault()
+        void handleCopyTotp()
       } else if (e.key === ',') {
         e.preventDefault()
         onModeChange('settings')
@@ -76,7 +96,7 @@ function SearchMode({ onModeChange, onLock, searchTrigger }: SearchModeProps) {
 
     window.addEventListener('keydown', handleKeyDown)
     return () => window.removeEventListener('keydown', handleKeyDown)
-  }, [hoveredEntryId, searchResults, onModeChange, onLock])
+  }, [hoveredEntryId, searchResults, onModeChange, onLock, handleCopyTotp])
 
   const handleEnterKey = useCallback(() => {
     if (searchResults.length > 0) {
@@ -110,6 +130,8 @@ function SearchMode({ onModeChange, onLock, searchTrigger }: SearchModeProps) {
     iconUrl: entry.icon_url ?? undefined,
   }))
 
+  const hoveredEntry = searchResults.find((entry) => entry.id === hoveredEntryId)
+
   const showList = searchResults.length > 0
 
   return (
@@ -141,10 +163,12 @@ function SearchMode({ onModeChange, onLock, searchTrigger }: SearchModeProps) {
         />
       )}
 
+      {hoveredEntry && <TOTPPreview entry={hoveredEntry} />}
+
       <div className="px-3 py-2 border-t-2 border-theme-accent bg-theme-bg flex items-center justify-evenly w-full">
         {searchResults.length > 0 ? (
           <span className="text-[11px] text-theme-text-secondary inline-flex items-center gap-[5px] whitespace-nowrap">
-            <kbd className="inline-block px-[5px] py-[2px] bg-theme-surface border border-theme-border font-theme text-[10px] font-medium text-theme-text-secondary">↑↓</kbd> Navigate <kbd className="inline-block px-[5px] py-[2px] bg-theme-surface border border-theme-border font-theme text-[10px] font-medium text-theme-text-secondary">Enter</kbd> Select <kbd className="inline-block px-[5px] py-[2px] bg-theme-surface border border-theme-border font-theme text-[10px] font-medium text-theme-text-secondary">Shift+Backspace</kbd> Delete <kbd className="inline-block px-[5px] py-[2px] bg-theme-surface border border-theme-border font-theme text-[10px] font-medium text-theme-text-secondary">Esc</kbd> Clear <kbd className="inline-block px-[5px] py-[2px] bg-theme-surface border border-theme-border font-theme text-[10px] font-medium text-theme-text-secondary">,</kbd> Settings <kbd className="inline-block px-[5px] py-[2px] bg-theme-surface border border-theme-border font-theme text-[10px] font-medium text-theme-text-secondary">Ctrl+H</kbd> Health
+            <kbd className="inline-block px-[5px] py-[2px] bg-theme-surface border border-theme-border font-theme text-[10px] font-medium text-theme-text-secondary">↑↓</kbd> Navigate <kbd className="inline-block px-[5px] py-[2px] bg-theme-surface border border-theme-border font-theme text-[10px] font-medium text-theme-text-secondary">Enter</kbd> Select <kbd className="inline-block px-[5px] py-[2px] bg-theme-surface border border-theme-border font-theme text-[10px] font-medium text-theme-text-secondary">Shift+Backspace</kbd> Delete <kbd className="inline-block px-[5px] py-[2px] bg-theme-surface border border-theme-border font-theme text-[10px] font-medium text-theme-text-secondary">Esc</kbd> Clear <kbd className="inline-block px-[5px] py-[2px] bg-theme-surface border border-theme-border font-theme text-[10px] font-medium text-theme-text-secondary">,</kbd> Settings <kbd className="inline-block px-[5px] py-[2px] bg-theme-surface border border-theme-border font-theme text-[10px] font-medium text-theme-text-secondary">Ctrl+H</kbd> Health <kbd className="inline-block px-[5px] py-[2px] bg-theme-surface border border-theme-border font-theme text-[10px] font-medium text-theme-text-secondary">Ctrl+T</kbd> 2FA
           </span>
         ) : (
           <span className="text-[11px] text-theme-text-secondary inline-flex items-center gap-[5px] whitespace-nowrap">

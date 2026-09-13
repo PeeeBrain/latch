@@ -161,6 +161,7 @@ pub fn run() {
             commands::credential::request_secret,
             commands::credential::add_entry,
             commands::credential::get_full_entry,
+            commands::credential::get_totp_token,
             commands::credential::update_entry,
             commands::credential::delete_entry,
             commands::generator::generate_password,

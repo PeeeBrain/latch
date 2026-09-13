@@ -1,5 +1,5 @@
 import { LucideIcon } from 'lucide-react'
-import { Key, User, ArrowLeft, LogOut, Edit, Dice1, Shield, Trash2 } from 'lucide-react'
+import { Key, User, ArrowLeft, LogOut, Edit, Dice1, Shield, ShieldCheck, Trash2 } from 'lucide-react'
 
 export interface Action {
   id: string
@@ -31,56 +31,74 @@ export function createUtilityActions(
   ]
 }
 
-export function createEntryActions(
-  entryId: string,
-  entryTitle: string,
-  onCopyPassword: (id: string) => Promise<void>,
-  onCopyUsername: (id: string) => Promise<void>,
-  onEdit: (id: string) => void | Promise<void>,
-  onLock: () => void,
-  onBack: () => void,
+export interface EntryActionOptions {
+  entryTitle: string
+  hasTotp: boolean
+  onCopyPassword: () => void | Promise<void>
+  onCopyUsername: () => void | Promise<void>
+  onCopyTotp: () => void | Promise<void>
+  onEdit: () => void | Promise<void>
+  onLock: () => void
+  onBack: () => void
   onDelete: () => void | Promise<void>
-): Action[] {
+}
+
+export function createEntryActions(options: EntryActionOptions): Action[] {
+  const { entryTitle, hasTotp } = options
+
+  const copyTotpActions: Action[] = hasTotp
+    ? [
+        {
+          id: 'copy-totp',
+          title: 'Copy 2FA Code',
+          subtitle: entryTitle,
+          icon: ShieldCheck,
+          handler: options.onCopyTotp,
+        },
+      ]
+    : []
+
   return [
     {
       id: 'copy-password',
       title: 'Copy Password',
       subtitle: entryTitle,
       icon: Key,
-      handler: () => onCopyPassword(entryId),
+      handler: () => options.onCopyPassword(),
     },
     {
       id: 'copy-username',
       title: 'Copy Username',
       subtitle: entryTitle,
       icon: User,
-      handler: () => onCopyUsername(entryId),
+      handler: () => options.onCopyUsername(),
     },
+    ...copyTotpActions,
     {
       id: 'edit',
       title: 'Edit Entry',
       subtitle: entryTitle,
       icon: Edit,
-      handler: () => onEdit(entryId),
+      handler: () => options.onEdit(),
     },
     {
       id: 'delete',
       title: 'Delete credential',
       subtitle: `"${entryTitle}"`,
       icon: Trash2,
-      handler: () => onDelete(),
+      handler: () => options.onDelete(),
     },
     {
       id: 'back',
       title: 'Back to Search',
       icon: ArrowLeft,
-      handler: onBack,
+      handler: options.onBack,
     },
     {
       id: 'lock',
       title: 'Lock Vault',
       icon: LogOut,
-      handler: onLock,
+      handler: options.onLock,
     },
   ]
 }
