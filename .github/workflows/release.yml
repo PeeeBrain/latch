@@ -1,18 +1,24 @@
 name: Release Build
 
 on:
-  workflow_run:
-    workflows: [CI]
-    types: [completed]
-    branches: [main]
-
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing version tag to release, for example v0.2.5
+        required: true
+        type: string
 
 permissions:
   contents: write
 
+concurrency:
+  group: release-${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+
 jobs:
   release:
-    if: ${{ github.event.workflow_run.conclusion == 'success' }}
     strategy:
       fail-fast: false
       matrix:
@@ -28,9 +34,18 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref }}
 
       - name: Setup Bun
         uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Verify release tag
+        env:
+          RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+        run: bun -e 'const config = await Bun.file("frontend/src-tauri/tauri.conf.json").json(); const expected = `v${config.version}`; if (process.env.RELEASE_TAG !== expected) { console.error(`Expected tag ${expected}, got ${process.env.RELEASE_TAG}`); process.exit(1); }'
 
       - name: Install Rust stable
         uses: dtolnay/rust-toolchain@stable
@@ -44,7 +59,7 @@ jobs:
 
       - name: Install frontend dependencies
         working-directory: frontend
-        run: bun install
+        run: bun install --frozen-lockfile
 
       - name: Decode signing key
         shell: bash
@@ -59,8 +74,8 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
           projectPath: frontend
-          tagName: v__VERSION__
-          releaseName: 'Latch v__VERSION__'
+          tagName: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+          releaseName: Latch ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
           releaseBody: 'See the assets to download this version and install.'
           releaseDraft: false
           prerelease: false
@@ -74,7 +89,7 @@ jobs:
             for platform_json in frontend/src-tauri/target/updater/*.json; do
               if [ -f "$platform_json" ]; then
                 platform_name=$(basename "$platform_json" .json)
-                gh release upload v__VERSION__ "$platform_json" --repo ${{ github.repository }}
+                gh release upload "${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}" "$platform_json" --repo ${{ github.repository }}
               fi
             done
           fi

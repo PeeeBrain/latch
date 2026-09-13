@@ -3,8 +3,18 @@ name: CI
 on:
   push:
     branches: [main]
+    paths:
+      - 'frontend/**'
+      - '.github/workflows/ci.yml'
   pull_request:
     branches: [main]
+    paths:
+      - 'frontend/**'
+      - '.github/workflows/ci.yml'
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
   CARGO_TERM_COLOR: always
@@ -25,7 +35,7 @@ jobs:
 
       - name: Install dependencies
         working-directory: ./frontend
-        run: bun install
+        run: bun install --frozen-lockfile
 
       - name: TypeScript type check
         working-directory: ./frontend
@@ -90,8 +100,8 @@ jobs:
         env:
           LATCH_OAUTH_SECRET: ${{ secrets.CI_LATCH_OAUTH_SECRET }}
         run: |
-          cargo check --all-targets
-          cargo test --all-targets
-          cargo clippy --all-targets --all-features -- -D warnings
+          cargo check --all-targets --locked
+          cargo test --all-targets --locked
+          cargo clippy --all-targets --all-features --locked -- -D warnings
         # NOTE: CI_LATCH_OAUTH_SECRET must be set as a GitHub Secret with >= 32 random bytes
         # Generate with: openssl rand -hex 32
