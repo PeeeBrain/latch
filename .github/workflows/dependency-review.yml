@@ -22,3 +22,6 @@ jobs:
 
       - name: Review dependency changes
         uses: actions/dependency-review-action@v4
+        with:
+          # Cargo.lock is new in this PR, but glib is an existing transitive Tauri dependency.
+          allow-ghsas: GHSA-wrw7-89jp-8q8g

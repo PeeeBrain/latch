@@ -45,7 +45,7 @@ cargo clippy --all-targets --all-features --locked -- -D warnings
 
 - CI runs for changes under `frontend/` and for changes to the CI workflow. Documentation-only pull requests do not start frontend or backend jobs. If CI becomes a required check in branch protection, replace the workflow path filters with a lightweight change-detection job so skipped workflows cannot leave pull requests pending.
 - A newer commit to a pull request cancels the older CI and dependency review runs for that pull request.
-- Dependency review runs on every pull request and fails when a change introduces a known vulnerable dependency.
+- Dependency review runs on every pull request and fails when a change introduces a known vulnerable dependency, except for documented existing advisories without a compatible fix.
 - Full Rust and Bun dependency audits run when either lockfile changes, every Monday at 03:17 UTC, and when a maintainer starts the workflow manually.
 - Releases run only from a version tag such as `v0.2.5`. The tag must match the version in `frontend/src-tauri/tauri.conf.json`. Manual dispatch exists to retry an existing tag.
 - Keep the 4-vCPU Blacksmith runners until job timing data shows that another size will reduce cost or elapsed time.
