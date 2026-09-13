@@ -6,17 +6,15 @@ afterEach(() => {
   cleanup()
 })
 
-declare global {
-  interface Window {
-    clipboard: {
-      writeText: ReturnType<typeof vi.fn>
-    }
-  }
+if (typeof Element.prototype.scrollIntoView !== 'function') {
+  Element.prototype.scrollIntoView = vi.fn()
 }
 
-Object.defineProperty(window, 'clipboard', {
+Object.defineProperty(navigator, 'clipboard', {
+  configurable: true,
   value: {
     writeText: vi.fn(),
+    readText: vi.fn(),
   },
 })
 

@@ -29,7 +29,7 @@ fn token_for_entry(
 
     Ok(TotpToken {
         token: crate::vault::totp::generate_token(secret, timestamp)?,
-        remaining_seconds: 30 - timestamp % 30,
+        remaining_seconds: crate::vault::totp::remaining_seconds(timestamp),
     })
 }
 

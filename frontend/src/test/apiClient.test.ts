@@ -31,6 +31,19 @@ describe('credential schemas', () => {
       })
     ).not.toThrow()
   })
+
+  test('exposes the has_totp flag on credential previews', () => {
+    const preview = CredentialPreviewSchema.parse({
+      id: 'entry-1',
+      title: 'Example',
+      username: 'user',
+      url: null,
+      icon_url: null,
+      has_totp: true,
+    })
+
+    expect(preview.has_totp).toBe(true)
+  })
 })
 
 describe('api client response parsing', () => {
@@ -105,6 +118,18 @@ describe('api client response parsing', () => {
       has_vault: true,
       is_unlocked: false,
     })
+  })
+
+  test('getTotpToken returns the token with its remaining seconds', async () => {
+    invokeMock.mockResolvedValue(
+      JSON.stringify({ status: 'success', token: '123456', remaining_seconds: 27 })
+    )
+
+    await expect(api.getTotpToken('entry-1')).resolves.toEqual({
+      token: '123456',
+      remaining_seconds: 27,
+    })
+    expect(invokeMock).toHaveBeenCalledWith('get_totp_token', { entryId: 'entry-1' })
   })
 })
 

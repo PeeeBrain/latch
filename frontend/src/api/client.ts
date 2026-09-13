@@ -6,6 +6,7 @@ import {
   AddEntryResponseSchema,
   FullEntryResponseSchema,
   SearchEntriesResponseSchema,
+  TotpTokenResponseSchema,
   VaultStatusResponseSchema,
   VaultHealthReportSchema,
   type Credential,
@@ -84,9 +85,15 @@ export const api = {
     return FullEntryResponseSchema.parse(JSON.parse(result as string)).entry
   },
 
+  async getTotpToken(entryId: string): Promise<{ token: string; remaining_seconds: number }> {
+    const result = await invoke('get_totp_token', { entryId })
+    const parsed = TotpTokenResponseSchema.parse(JSON.parse(result as string))
+    return { token: parsed.token, remaining_seconds: parsed.remaining_seconds }
+  },
+
   async addEntry(entry: {
     title: string; username: string; password: string;
-    url?: string; iconUrl?: string;
+    url?: string; iconUrl?: string; totpSecret?: string;
   }): Promise<string> {
     const result = await invoke('add_entry', entry)
     return AddEntryResponseSchema.parse(JSON.parse(result as string)).id
@@ -94,7 +101,7 @@ export const api = {
 
   async updateEntry(entry: {
     id: string; title: string; username: string;
-    password: string; url?: string; iconUrl?: string;
+    password: string; url?: string; iconUrl?: string; totpSecret?: string;
   }): Promise<void> {
     const result = await invoke('update_entry', entry)
     parse(result, ResponseSchema)

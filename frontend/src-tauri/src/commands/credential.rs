@@ -1,6 +1,35 @@
 use crate::commands::VaultState;
+use crate::vault::Entry;
 use serde_json::json;
 use tauri::State;
+
+/// Build the editable-payload JSON for a credential. The raw `totp_secret` is
+/// never serialized to the webview; only its presence is exposed.
+fn serialize_full_entry(entry: &Entry) -> String {
+    json!({
+        "status": "success",
+        "entry": {
+            "id": entry.id,
+            "title": entry.title,
+            "username": entry.username,
+            "password": entry.password,
+            "url": entry.url,
+            "icon_url": entry.icon_url,
+            "has_totp": entry.totp_secret.is_some(),
+        }
+    })
+    .to_string()
+}
+
+/// Normalize the incoming TOTP value. `None` means "leave unchanged"; a blank
+/// value returns an empty marker so an update can clear the stored secret.
+fn normalize_totp_secret(totp_secret: Option<String>) -> Result<Option<String>, String> {
+    match totp_secret {
+        Some(value) if value.trim().is_empty() => Ok(Some(String::new())),
+        Some(value) => Ok(Some(crate::vault::totp::extract_secret(&value)?)),
+        None => Ok(None),
+    }
+}
 
 fn validate_entry_fields(
     title: &str,
@@ -88,7 +117,7 @@ pub async fn add_entry(
         password,
         url,
         icon_url,
-        totp_secret,
+        totp_secret: normalize_totp_secret(totp_secret)?.filter(|secret| !secret.is_empty()),
     };
 
     state.lock(|storage, workspace| crate::vault::entries::add(workspace, storage, entry))?;
@@ -103,18 +132,7 @@ pub async fn get_full_entry(
 ) -> Result<String, String> {
     let entry = state.lock(|_, workspace| crate::vault::entries::get_full(workspace, &entry_id))?;
 
-    Ok(json!({
-        "status": "success",
-        "entry": {
-            "id": entry.id.clone(),
-            "title": entry.title.clone(),
-            "username": entry.username.clone(),
-            "password": entry.password.clone(),
-            "url": entry.url.clone(),
-            "icon_url": entry.icon_url.clone(),
-        }
-    })
-    .to_string())
+    Ok(serialize_full_entry(&entry))
 }
 
 #[tauri::command]
@@ -138,7 +156,7 @@ pub async fn update_entry(
         password,
         url,
         icon_url,
-        totp_secret,
+        totp_secret: normalize_totp_secret(totp_secret)?,
     };
 
     state.lock(|storage, workspace| crate::vault::entries::update(workspace, storage, entry))?;
@@ -155,4 +173,53 @@ pub async fn delete_entry(
         .lock(|storage, workspace| crate::vault::entries::delete(workspace, storage, &entry_id))?;
 
     Ok(json!({"status": "success"}).to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn entry_with_secret() -> Entry {
+        Entry {
+            id: "entry-1".to_string(),
+            title: "Example".to_string(),
+            username: "user".to_string(),
+            password: "secret".to_string(),
+            url: Some("https://example.com".to_string()),
+            icon_url: None,
+            totp_secret: Some("GEZDGNBVGY3TQOJQ".to_string()),
+        }
+    }
+
+    #[test]
+    fn full_entry_payload_never_exposes_totp_secret() {
+        let payload = serialize_full_entry(&entry_with_secret());
+
+        assert!(!payload.contains("GEZDGNBVGY3TQOJQ"));
+        assert!(!payload.contains("totp_secret"));
+        assert!(payload.contains("\"has_totp\":true"));
+    }
+
+    #[test]
+    fn full_entry_payload_keeps_editable_fields() {
+        let payload = serialize_full_entry(&entry_with_secret());
+
+        assert!(payload.contains("\"title\":\"Example\""));
+        assert!(payload.contains("\"password\":\"secret\""));
+        assert!(payload.contains("\"status\":\"success\""));
+    }
+
+    #[test]
+    fn normalize_totp_secret_marks_blank_for_clearing_and_extracts_uris() {
+        assert_eq!(normalize_totp_secret(None).unwrap(), None);
+        assert_eq!(
+            normalize_totp_secret(Some("   ".into())).unwrap(),
+            Some(String::new())
+        );
+        assert_eq!(
+            normalize_totp_secret(Some(" gezd gnbv ".into())).unwrap(),
+            Some("GEZDGNBV".to_string())
+        );
+        assert!(normalize_totp_secret(Some("otpauth://totp/A?secret=GEZD1NBV".into())).is_err());
+    }
 }

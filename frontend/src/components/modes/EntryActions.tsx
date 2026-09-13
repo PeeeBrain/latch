@@ -17,10 +17,9 @@ function EntryActions({ entry, onModeChange, onLock }: EntryActionsProps) {
   const [error, setError] = useState('')
   const { copy } = useClipboardGuard()
 
-  const handleCopyPassword = async () => {
+  const handleCopySecret = async (load: () => Promise<string>) => {
     try {
-      const value = await api.copyField(entry.id, 'password')
-      await copy(value)
+      await copy(await load())
       onModeChange('search')
     } catch (err) {
       const errMsg = err instanceof Error ? err.message : String(err)
@@ -30,6 +29,11 @@ function EntryActions({ entry, onModeChange, onLock }: EntryActionsProps) {
       setError(errMsg)
     }
   }
+
+  const handleCopyPassword = () => handleCopySecret(() => api.copyField(entry.id, 'password'))
+
+  const handleCopyTotp = () =>
+    handleCopySecret(async () => (await api.getTotpToken(entry.id)).token)
 
   const handleCopyUsername = async () => {
     if (entry.username) {
@@ -60,16 +64,17 @@ function EntryActions({ entry, onModeChange, onLock }: EntryActionsProps) {
     onModeChange('delete-confirm', entry)
   }
 
-  const actions = createEntryActions(
-    entry.id,
-    entry.title,
-    handleCopyPassword,
-    handleCopyUsername,
-    handleEdit,
+  const actions = createEntryActions({
+    entryTitle: entry.title,
+    hasTotp: entry.has_totp ?? false,
+    onCopyPassword: handleCopyPassword,
+    onCopyUsername: handleCopyUsername,
+    onCopyTotp: handleCopyTotp,
+    onEdit: handleEdit,
     onLock,
     onBack,
-    handleDelete
-  )
+    onDelete: handleDelete,
+  })
 
   const handleEnterKey = () => {
     actions[selectedIndex].handler()

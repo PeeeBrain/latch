@@ -1,7 +1,11 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useReducer, useEffect, useCallback } from 'react'
 import { api } from '../api/client'
 import { type PaletteMode, type CredentialPreview } from '../api/types'
 import { useKeyboardShortcuts } from '../hooks/useKeyboardShortcuts'
+import {
+  createInitialState,
+  paletteReducer,
+} from './palette/PaletteStore'
 import SearchMode from './modes/SearchMode'
 import EntryActions from './modes/EntryActions'
 import AddCredential from './modes/AddCredential'
@@ -24,106 +28,94 @@ interface CommandPaletteProps {
 }
 
 function CommandPalette({ initialMode }: CommandPaletteProps) {
-  const [mode, setMode] = useState<PaletteMode>(initialMode)
-  const [activeEntry, setActiveEntry] = useState<CredentialPreview | null>(null)
-  const [prefillTitle, setPrefillTitle] = useState('')
-  const [generatedPassword, setGeneratedPassword] = useState('')
-  const [entryForGenerator, setEntryForGenerator] = useState<CredentialPreview | null>(null)
-  const [credentialsChanged, setCredentialsChanged] = useState(0)
+  const [state, dispatch] = useReducer(paletteReducer, initialMode, createInitialState)
+  const { view } = state
 
   useEffect(() => {
-    setMode(initialMode)
-    setActiveEntry(null)
-    setPrefillTitle('')
-    setGeneratedPassword('')
-    setEntryForGenerator(null)
+    dispatch({ type: 'MODE_CHANGE', mode: initialMode })
   }, [initialMode])
 
   const handleCredentialsChanged = useCallback(() => {
-    setCredentialsChanged((c) => c + 1)
+    dispatch({ type: 'CREDENTIALS_CHANGED' })
   }, [])
 
   const handleLock = useCallback(async () => {
     try {
       await api.lockVault()
       const authMethod = await api.getAuthMethod()
-      setMode(authMethod === 'biometric-keychain' ? 'biometric-login' : 'oauth-login')
+      dispatch({
+        type: 'MODE_CHANGE',
+        mode: authMethod === 'biometric-keychain' ? 'biometric-login' : 'oauth-login',
+      })
     } catch (error) {
       console.error('Failed to lock vault:', error)
     }
   }, [])
 
-  const handleModeChange = useCallback((newMode: PaletteMode, entry?: CredentialPreview, title?: string) => {
-    if (newMode === 'search') {
-      setActiveEntry(null)
-      setPrefillTitle('')
-    } else {
-      if (entry) {
-        setActiveEntry(entry)
-      }
-      if (title !== undefined) {
-        setPrefillTitle(title)
-      }
-    }
-    if (newMode !== 'add-entry' && newMode !== 'edit-entry') {
-      setGeneratedPassword('')
-    }
-    if (newMode === 'search' || newMode === 'add-entry' || newMode === 'edit-entry') {
-      setEntryForGenerator(null)
-    }
-    setMode(newMode)
-  }, [])
+  const handleModeChange = useCallback(
+    (newMode: PaletteMode, entry?: CredentialPreview, title?: string) => {
+      dispatch({ type: 'MODE_CHANGE', mode: newMode, entry, prefillTitle: title })
+    },
+    []
+  )
 
   const handleOAuthSuccess = useCallback(() => {
-    setMode('search')
-    setActiveEntry(null)
+    dispatch({ type: 'GO_TO_SEARCH' })
   }, [])
 
   const handleOAuthError = useCallback((_errorMsg: string) => {
   }, [])
 
+  const openEntry = useCallback((entryId: string) => {
+    dispatch({
+      type: 'MODE_CHANGE',
+      mode: 'edit-entry',
+      entry: { id: entryId, title: '', username: '' },
+    })
+  }, [])
+
   const handleShortcutEscape = useCallback(() => {
-    if (mode === 'settings') {
-      setMode('search')
-    } else if (mode === 'vault-health') {
-      setMode('search')
-    } else if (mode === 'health-weak' || mode === 'health-reused' || mode === 'health-breached') {
-      setMode('vault-health')
-    }
-  }, [mode])
+    dispatch({ type: 'ESCAPE' })
+  }, [])
+
+  const escapeEnabled =
+    view.mode === 'settings' ||
+    view.mode === 'vault-health' ||
+    view.mode === 'health-weak' ||
+    view.mode === 'health-reused' ||
+    view.mode === 'health-breached'
 
   useKeyboardShortcuts({
     onEscape: handleShortcutEscape,
-    enabled: mode === 'settings' || mode === 'vault-health' ||
-             mode === 'health-weak' || mode === 'health-reused' || mode === 'health-breached',
+    enabled: escapeEnabled,
   })
 
   const renderMode = () => {
-    switch (mode) {
+    switch (view.mode) {
       case 'search':
         return (
           <SearchMode
             onModeChange={handleModeChange}
             onLock={handleLock}
-            searchTrigger={credentialsChanged}
+            searchTrigger={state.credentialsChanged}
           />
         )
 
       case 'actions':
-        return activeEntry ? (
+        return (
           <EntryActions
-            entry={activeEntry}
+            entry={view.entry}
             onModeChange={handleModeChange}
             onLock={handleLock}
           />
-        ) : null
+        )
 
       case 'add-entry':
         return (
           <AddCredential
             editEntry={null}
-            prefillTitle={prefillTitle}
-            generatedPassword={generatedPassword}
+            prefillTitle={view.prefillTitle ?? ''}
+            generatedPassword={view.generatedPassword ?? ''}
             onModeChange={handleModeChange}
             onCredentialsChanged={handleCredentialsChanged}
           />
@@ -132,28 +124,28 @@ function CommandPalette({ initialMode }: CommandPaletteProps) {
       case 'edit-entry':
         return (
           <AddCredential
-            editEntry={activeEntry}
-            prefillTitle={prefillTitle}
-            generatedPassword={generatedPassword}
+            editEntry={view.entry}
+            prefillTitle=""
+            generatedPassword={view.generatedPassword ?? ''}
             onModeChange={handleModeChange}
             onCredentialsChanged={handleCredentialsChanged}
           />
         )
 
       case 'delete-confirm':
-        return activeEntry ? (
+        return (
           <DeleteConfirm
-            entry={activeEntry}
+            entry={view.entry}
             onModeChange={handleModeChange}
             onCredentialsChanged={handleCredentialsChanged}
           />
-        ) : null
+        )
 
       case 'auth-selector':
         return (
           <AuthSelector
-            onOAuthSelect={() => setMode('oauth-setup')}
-            onBiometricSelect={() => setMode('biometric-setup')}
+            onOAuthSelect={() => dispatch({ type: 'MODE_CHANGE', mode: 'oauth-setup' })}
+            onBiometricSelect={() => dispatch({ type: 'MODE_CHANGE', mode: 'biometric-setup' })}
           />
         )
 
@@ -186,26 +178,10 @@ function CommandPalette({ initialMode }: CommandPaletteProps) {
       case 'password-generator':
         return (
           <PasswordGenerator
-            onPasswordSelect={(password) => {
-              if (entryForGenerator) {
-                setGeneratedPassword(password)
-                setActiveEntry(entryForGenerator)
-                setMode('edit-entry')
-              } else {
-                setGeneratedPassword(password)
-                setMode('add-entry')
-              }
-            }}
-            onCancel={() => {
-              if (entryForGenerator) {
-                setActiveEntry(entryForGenerator)
-                setMode('edit-entry')
-              } else {
-                setMode('search')
-              }
-              setEntryForGenerator(null)
-              setGeneratedPassword('')
-            }}
+            onPasswordSelect={(password) =>
+              dispatch({ type: 'APPLY_GENERATED_PASSWORD', password })
+            }
+            onCancel={() => dispatch({ type: 'CANCEL_GENERATOR' })}
             initialLength={16}
           />
         )
@@ -213,47 +189,25 @@ function CommandPalette({ initialMode }: CommandPaletteProps) {
       case 'vault-health':
         return (
           <VaultHealth
-            onWeakPasswords={() => setMode('health-weak')}
-            onReusedPasswords={() => setMode('health-reused')}
-            onBreachedCredentials={() => setMode('health-breached')}
+            onWeakPasswords={() => dispatch({ type: 'MODE_CHANGE', mode: 'health-weak' })}
+            onReusedPasswords={() => dispatch({ type: 'MODE_CHANGE', mode: 'health-reused' })}
+            onBreachedCredentials={() => dispatch({ type: 'MODE_CHANGE', mode: 'health-breached' })}
           />
         )
 
       case 'health-weak':
-        return (
-          <WeakPasswordsList
-            onSelectEntry={(entryId) => {
-              const entry: CredentialPreview = { id: entryId, title: '', username: '' }
-              setActiveEntry(entry)
-              setMode('edit-entry')
-            }}
-          />
-        )
+        return <WeakPasswordsList onSelectEntry={openEntry} />
 
       case 'health-reused':
-        return (
-          <ReusedPasswordsList
-            onSelectEntry={(entryId) => {
-              const entry: CredentialPreview = { id: entryId, title: '', username: '' }
-              setActiveEntry(entry)
-              setMode('edit-entry')
-            }}
-          />
-        )
+        return <ReusedPasswordsList onSelectEntry={openEntry} />
 
       case 'health-breached':
-        return (
-          <BreachedCredentialsList
-            onSelectEntry={(entryId) => {
-              const entry: CredentialPreview = { id: entryId, title: '', username: '' }
-              setActiveEntry(entry)
-              setMode('edit-entry')
-            }}
-          />
-        )
+        return <BreachedCredentialsList onSelectEntry={openEntry} />
 
-      default:
-        return null
+      default: {
+        const exhaustiveCheck: never = view
+        return exhaustiveCheck
+      }
     }
   }
 
@@ -265,6 +219,3 @@ function CommandPalette({ initialMode }: CommandPaletteProps) {
 }
 
 export default CommandPalette
-
-
-
