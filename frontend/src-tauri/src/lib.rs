@@ -163,6 +163,8 @@ pub fn run() {
             commands::credential::get_full_entry,
             commands::credential::update_entry,
             commands::credential::delete_entry,
+            commands::totp::get_totp_token,
+            commands::alias::generate_email_mask,
             commands::generator::generate_password,
             commands::generator::analyze_password_strength,
             commands::health::check_vault_health,

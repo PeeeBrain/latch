@@ -64,9 +64,7 @@ pub fn get_field(workspace: &mut Workspace, id: &str, field: &str) -> Result<Str
 
 fn persist(workspace: &Workspace, storage: &VaultStorage) -> Result<(), String> {
     let key = workspace.session_key.as_ref().ok_or("Vault is locked")?;
-    let vault_data = VaultData {
-        entries: workspace.credentials.clone(),
-    };
+    let vault_data = VaultData::from_workspace(workspace);
     let json =
         serde_json::to_string(&vault_data).map_err(|e| format!("Failed to serialize: {}", e))?;
     let encrypted = aead::encrypt(key, &json)?;
@@ -90,6 +88,7 @@ mod tests {
             password: "secret".to_string(),
             url: None,
             icon_url: None,
+            totp_secret: None,
         });
         workspace.start([7u8; 32]);
         workspace

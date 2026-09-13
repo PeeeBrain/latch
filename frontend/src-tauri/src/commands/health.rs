@@ -40,6 +40,7 @@ mod tests {
             password: "secret".to_string(),
             url: None,
             icon_url: None,
+            totp_secret: None,
         });
         workspace.start([5u8; 32]);
         workspace.session_start =

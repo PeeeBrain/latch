@@ -1,9 +1,11 @@
-use super::{Entry, SESSION_TIMEOUT_SECS};
+use super::{AliasConfig, Entry, SESSION_TIMEOUT_SECS};
 use std::time::SystemTime;
 use zeroize::Zeroize;
 
 pub struct Workspace {
     pub credentials: Vec<Entry>,
+    pub alias_configs: Vec<AliasConfig>,
+    pub default_provider_id: Option<String>,
     pub session_key: Option<zeroize::Zeroizing<[u8; 32]>>,
     pub session_start: Option<SystemTime>,
 }
@@ -12,6 +14,8 @@ impl Workspace {
     pub fn new() -> Self {
         Self {
             credentials: Vec::new(),
+            alias_configs: Vec::new(),
+            default_provider_id: None,
             session_key: None,
             session_start: None,
         }
@@ -51,6 +55,8 @@ impl Workspace {
         self.session_key = None;
         self.session_start = None;
         self.credentials.clear();
+        self.alias_configs.clear();
+        self.default_provider_id = None;
     }
 
     pub fn start(&mut self, key: [u8; 32]) {
