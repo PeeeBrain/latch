@@ -61,7 +61,7 @@ function AddCredential({ editEntry, prefillTitle, generatedPassword, onModeChang
     setTotpTouched(true)
     setFormData((prev) => ({
       ...prev,
-      totpSecret: value,
+      totpSecret: parsed?.secret ?? value,
       title: prev.title || parsed?.title || '',
       username: prev.username || parsed?.username || ''
     }))
