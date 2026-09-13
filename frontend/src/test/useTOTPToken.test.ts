@@ -119,4 +119,29 @@ describe('useTOTPToken', () => {
     expect(result.current.token).toBeNull()
     expect(result.current.remainingSeconds).toBe(0)
   })
+
+  test('refreshes when the window regains focus or visibility', async () => {
+    getTotpToken
+      .mockResolvedValueOnce({ token: '111111', remaining_seconds: 30 })
+      .mockResolvedValueOnce({ token: '222222', remaining_seconds: 30 })
+      .mockResolvedValueOnce({ token: '333333', remaining_seconds: 30 })
+
+    const { result } = renderHook(() => useTOTPToken('entry-1'))
+    await flush()
+    expect(getTotpToken).toHaveBeenCalledTimes(1)
+
+    await act(async () => {
+      window.dispatchEvent(new Event('focus'))
+    })
+    await flush()
+    expect(getTotpToken).toHaveBeenCalledTimes(2)
+    expect(result.current.token).toBe('222222')
+
+    await act(async () => {
+      document.dispatchEvent(new Event('visibilitychange'))
+    })
+    await flush()
+    expect(getTotpToken).toHaveBeenCalledTimes(3)
+    expect(result.current.token).toBe('333333')
+  })
 })

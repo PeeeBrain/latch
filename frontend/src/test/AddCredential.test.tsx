@@ -9,8 +9,11 @@ vi.mock('../api/client', () => ({
 import { api } from '../api/client'
 
 const addEntry = vi.mocked(api.addEntry)
+const updateEntry = vi.mocked(api.updateEntry)
+const getFullEntry = vi.mocked(api.getFullEntry)
 
 const TOTP_PLACEHOLDER = '2FA secret or otpauth:// link (optional)...'
+const EDIT_TOTP_PLACEHOLDER = 'Edit 2FA secret or otpauth:// link (blank keeps current)...'
 
 function renderForm() {
   return render(
@@ -21,6 +24,27 @@ function renderForm() {
       onModeChange={vi.fn()}
       onCredentialsChanged={vi.fn()}
     />,
+  )
+}
+
+function renderEditForm() {
+  return render(
+    <AddCredential
+      editEntry={{ id: 'entry-1', title: 'GitHub', username: 'user', has_totp: true }}
+      prefillTitle=""
+      generatedPassword=""
+      onModeChange={vi.fn()}
+      onCredentialsChanged={vi.fn()}
+    />,
+  )
+}
+
+async function waitForEditForm() {
+  await waitFor(() => expect(getFullEntry).toHaveBeenCalledWith('entry-1'))
+  await waitFor(() =>
+    expect(
+      (screen.getByPlaceholderText('Edit website title...') as HTMLInputElement).value,
+    ).toBe('GitHub'),
   )
 }
 
@@ -78,4 +102,42 @@ describe('AddCredential 2FA secret', () => {
       'john@example.com',
     )
   })
+
+  it('keeps the stored 2FA secret when the edit field is untouched', async () => {
+    getFullEntry.mockResolvedValue({
+      id: 'entry-1',
+      title: 'GitHub',
+      username: 'user',
+      password: 'hunter2',
+    })
+    updateEntry.mockResolvedValue()
+    renderEditForm()
+    await waitForEditForm()
+
+    fireEvent.keyDown(window, { key: 'Enter' })
+
+    await waitFor(() => expect(updateEntry).toHaveBeenCalledTimes(1))
+    expect(updateEntry).toHaveBeenCalledWith(expect.objectContaining({ totpSecret: undefined }))
+  })
+
+  it('clears the stored 2FA secret when the edit field is emptied', async () => {
+    getFullEntry.mockResolvedValue({
+      id: 'entry-1',
+      title: 'GitHub',
+      username: 'user',
+      password: 'hunter2',
+    })
+    updateEntry.mockResolvedValue()
+    renderEditForm()
+    await waitForEditForm()
+
+    const totpInput = screen.getByPlaceholderText(EDIT_TOTP_PLACEHOLDER)
+    fireEvent.change(totpInput, { target: { value: 'JBSWY3DPEHPK3PXP' } })
+    fireEvent.change(totpInput, { target: { value: '' } })
+    fireEvent.keyDown(window, { key: 'Enter' })
+
+    await waitFor(() => expect(updateEntry).toHaveBeenCalledTimes(1))
+    expect(updateEntry).toHaveBeenCalledWith(expect.objectContaining({ totpSecret: '' }))
+  })
 })
+

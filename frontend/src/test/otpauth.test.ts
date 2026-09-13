@@ -44,4 +44,20 @@ describe('parseOtpAuthUri', () => {
     expect(parseOtpAuthUri('otpauth://hotp/ACME?secret=ABC')).toBeNull()
     expect(parseOtpAuthUri('otpauth://totp/%E0%A4%A?secret=ABC')).toBeNull()
   })
+
+  it('accepts explicit default parameters', () => {
+    const result = parseOtpAuthUri(
+      'otpauth://totp/ACME?secret=JBSWY3DPEHPK3PXP&algorithm=SHA1&digits=6&period=30',
+    )
+
+    expect(result).not.toBeNull()
+  })
+
+  it('rejects URIs that need unsupported TOTP parameters', () => {
+    expect(
+      parseOtpAuthUri('otpauth://totp/ACME?secret=JBSWY3DPEHPK3PXP&algorithm=SHA256'),
+    ).toBeNull()
+    expect(parseOtpAuthUri('otpauth://totp/ACME?secret=JBSWY3DPEHPK3PXP&digits=8')).toBeNull()
+    expect(parseOtpAuthUri('otpauth://totp/ACME?secret=JBSWY3DPEHPK3PXP&period=60')).toBeNull()
+  })
 })

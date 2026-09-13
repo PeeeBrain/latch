@@ -21,12 +21,13 @@ fn serialize_full_entry(entry: &Entry) -> String {
     .to_string()
 }
 
+/// Normalize the incoming TOTP value. `None` means "leave unchanged"; a blank
+/// value returns an empty marker so an update can clear the stored secret.
 fn normalize_totp_secret(totp_secret: Option<String>) -> Result<Option<String>, String> {
     match totp_secret {
-        Some(value) if !value.trim().is_empty() => {
-            Ok(Some(crate::vault::totp::extract_secret(&value)?))
-        }
-        _ => Ok(None),
+        Some(value) if value.trim().is_empty() => Ok(Some(String::new())),
+        Some(value) => Ok(Some(crate::vault::totp::extract_secret(&value)?)),
+        None => Ok(None),
     }
 }
 
@@ -116,7 +117,7 @@ pub async fn add_entry(
         password,
         url,
         icon_url,
-        totp_secret: normalize_totp_secret(totp_secret)?,
+        totp_secret: normalize_totp_secret(totp_secret)?.filter(|secret| !secret.is_empty()),
     };
 
     state.lock(|storage, workspace| crate::vault::entries::add(workspace, storage, entry))?;
@@ -209,9 +210,12 @@ mod tests {
     }
 
     #[test]
-    fn normalize_totp_secret_clears_blank_and_extracts_uris() {
+    fn normalize_totp_secret_marks_blank_for_clearing_and_extracts_uris() {
         assert_eq!(normalize_totp_secret(None).unwrap(), None);
-        assert_eq!(normalize_totp_secret(Some("   ".into())).unwrap(), None);
+        assert_eq!(
+            normalize_totp_secret(Some("   ".into())).unwrap(),
+            Some(String::new())
+        );
         assert_eq!(
             normalize_totp_secret(Some(" gezd gnbv ".into())).unwrap(),
             Some("GEZDGNBV".to_string())

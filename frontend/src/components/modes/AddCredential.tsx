@@ -25,6 +25,7 @@ function AddCredential({ editEntry, prefillTitle, generatedPassword, onModeChang
   })
   const [error, setError] = useState('')
   const [loadedEdit, setLoadedEdit] = useState(false)
+  const [totpTouched, setTotpTouched] = useState(false)
 
   useEffect(() => {
     if (isEditing && editEntry && !loadedEdit) {
@@ -49,6 +50,7 @@ function AddCredential({ editEntry, prefillTitle, generatedPassword, onModeChang
         totpSecret: ''
       })
       setLoadedEdit(true)
+      setTotpTouched(false)
     } catch (error) {
       console.error('Failed to load entry for editing:', error)
     }
@@ -56,6 +58,7 @@ function AddCredential({ editEntry, prefillTitle, generatedPassword, onModeChang
 
   const handleTotpChange = (value: string) => {
     const parsed = parseOtpAuthUri(value)
+    setTotpTouched(true)
     setFormData((prev) => ({
       ...prev,
       totpSecret: value,
@@ -75,7 +78,7 @@ function AddCredential({ editEntry, prefillTitle, generatedPassword, onModeChang
     try {
       let iconUrl: string | undefined
       const url = formData.url.trim() || undefined
-      const totpSecret = formData.totpSecret.trim() || undefined
+      const totpSecret = totpTouched ? formData.totpSecret.trim() : undefined
 
       if (url) {
         try {
@@ -110,13 +113,14 @@ function AddCredential({ editEntry, prefillTitle, generatedPassword, onModeChang
       }
 
       setFormData({ title: '', username: '', password: '', url: '', totpSecret: '' })
+      setTotpTouched(false)
       onCredentialsChanged()
       onModeChange('search')
     } catch (err) {
       console.error(`Error ${isEditing ? 'updating' : 'adding'} entry:`, err)
       setError(err instanceof Error ? err.message : String(err))
     }
-  }, [formData, editEntry, isEditing, onModeChange, onCredentialsChanged])
+  }, [formData, editEntry, isEditing, totpTouched, onModeChange, onCredentialsChanged])
 
   useEffect(() => {
     function handleKey(e: KeyboardEvent) {
@@ -127,6 +131,7 @@ function AddCredential({ editEntry, prefillTitle, generatedPassword, onModeChang
         e.preventDefault()
         setFormData({ title: '', username: '', password: '', url: '', totpSecret: '' })
         setLoadedEdit(false)
+        setTotpTouched(false)
         onModeChange('search')
       }
     }

@@ -24,10 +24,27 @@ pub fn normalize_secret(input: &str) -> Result<String, String> {
 }
 
 /// Accept either a raw Base32 secret or an `otpauth://` provisioning URI.
+/// URIs requesting parameters other than the supported SHA-1/6-digit/30-second
+/// defaults are rejected instead of silently generating incompatible codes.
 pub fn extract_secret(input: &str) -> Result<String, String> {
     let trimmed = input.trim();
     if trimmed.to_ascii_lowercase().starts_with("otpauth://") {
         let url = url::Url::parse(trimmed).map_err(|e| format!("Invalid otpauth URI: {}", e))?;
+
+        for (key, value) in url.query_pairs() {
+            let supported = match key.as_ref() {
+                "algorithm" => value.eq_ignore_ascii_case("sha1"),
+                "digits" => value == "6",
+                "period" => value == "30",
+                _ => true,
+            };
+            if !supported {
+                return Err(
+                    "Only SHA-1, 6-digit, 30-second TOTP is supported for this secret".to_string(),
+                );
+            }
+        }
+
         let secret = url
             .query_pairs()
             .find(|(key, _)| key == "secret")
@@ -118,6 +135,23 @@ mod tests {
     #[test]
     fn rejects_otpauth_uri_without_secret() {
         assert!(extract_secret("otpauth://totp/ACME?issuer=ACME").is_err());
+    }
+
+    #[test]
+    fn accepts_otpauth_uri_with_explicit_default_parameters() {
+        let uri = "otpauth://totp/ACME?secret=GEZDGNBVGY3TQOJQ&algorithm=SHA1&digits=6&period=30";
+        assert_eq!(extract_secret(uri).unwrap(), "GEZDGNBVGY3TQOJQ");
+    }
+
+    #[test]
+    fn rejects_otpauth_uri_with_unsupported_parameters() {
+        for uri in [
+            "otpauth://totp/ACME?secret=GEZDGNBVGY3TQOJQ&algorithm=SHA256",
+            "otpauth://totp/ACME?secret=GEZDGNBVGY3TQOJQ&digits=8",
+            "otpauth://totp/ACME?secret=GEZDGNBVGY3TQOJQ&period=60",
+        ] {
+            assert!(extract_secret(uri).is_err(), "{uri} should be rejected");
+        }
     }
 
     #[test]

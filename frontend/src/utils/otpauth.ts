@@ -9,6 +9,17 @@ const nonEmpty = (value: string | undefined | null): string | undefined => {
   return trimmed ? trimmed : undefined
 }
 
+const hasUnsupportedParams = (params: URLSearchParams): boolean => {
+  const algorithm = params.get('algorithm')
+  const digits = params.get('digits')
+  const period = params.get('period')
+  return (
+    (algorithm !== null && algorithm.toLowerCase() !== 'sha1') ||
+    (digits !== null && digits !== '6') ||
+    (period !== null && period !== '30')
+  )
+}
+
 export function parseOtpAuthUri(input: string): OtpAuthDetails | null {
   const trimmed = input.trim()
   if (!trimmed.toLowerCase().startsWith('otpauth://')) return null
@@ -24,6 +35,7 @@ export function parseOtpAuthUri(input: string): OtpAuthDetails | null {
 
   const secret = nonEmpty(url.searchParams.get('secret'))
   if (!secret) return null
+  if (hasUnsupportedParams(url.searchParams)) return null
 
   let label: string
   try {

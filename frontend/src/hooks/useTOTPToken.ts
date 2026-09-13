@@ -50,9 +50,19 @@ export function useTOTPToken(entryId: string | null | undefined): TotpTokenState
       }
     }, 1000)
 
+    const onVisible = () => {
+      if (document.visibilityState === 'visible') {
+        void refresh()
+      }
+    }
+    document.addEventListener('visibilitychange', onVisible)
+    window.addEventListener('focus', onVisible)
+
     return () => {
       cancelled = true
       window.clearInterval(interval)
+      document.removeEventListener('visibilitychange', onVisible)
+      window.removeEventListener('focus', onVisible)
     }
   }, [entryId])
 

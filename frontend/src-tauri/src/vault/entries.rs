@@ -33,8 +33,10 @@ pub fn update(
         .position(|e| e.id == entry.id)
         .ok_or_else(|| format!("Credential '{}' not found", entry.id))?;
 
-    if entry.totp_secret.is_none() {
-        entry.totp_secret = workspace.credentials[idx].totp_secret.clone();
+    match entry.totp_secret.as_deref() {
+        None => entry.totp_secret = workspace.credentials[idx].totp_secret.clone(),
+        Some("") => entry.totp_secret = None,
+        Some(_) => {}
     }
     workspace.credentials[idx] = entry;
     persist(workspace, storage)
@@ -157,6 +159,17 @@ mod tests {
         update(&mut workspace, &storage, replacement(Some("NEW"))).unwrap();
 
         assert_eq!(workspace.credentials[0].totp_secret.as_deref(), Some("NEW"));
+    }
+
+    #[test]
+    fn update_clears_the_stored_totp_secret_when_an_empty_value_is_provided() {
+        let (storage, _dir) = test_storage();
+        let mut workspace = unlocked_workspace();
+        workspace.credentials[0].totp_secret = Some("JBSWY3DPEHPK3PXP".to_string());
+
+        update(&mut workspace, &storage, replacement(Some(""))).unwrap();
+
+        assert_eq!(workspace.credentials[0].totp_secret, None);
     }
 
     #[test]
