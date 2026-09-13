@@ -1,0 +1,29 @@
+name: Dependency Review
+
+on:
+  pull_request:
+    branches: [main, develop]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
+  cancel-in-progress: true
+
+jobs:
+  dependency-review:
+    name: Dependency Review
+    runs-on: blacksmith-4vcpu-ubuntu-2404
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Review dependency changes
+        uses: actions/dependency-review-action@v4
+        with:
+          # Cargo.lock is new in this PR, so Dependency Review sees the existing dependency
+          # tree as newly added. glib is transitive through Tauri. jsonwebtoken is a direct
+          # dependency whose patched release requires Rust 1.85; Latch currently supports 1.77.2.
+          allow-ghsas: GHSA-wrw7-89jp-8q8g, GHSA-h395-gr6q-cpjc

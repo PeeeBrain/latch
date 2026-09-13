@@ -46,6 +46,9 @@ frontend/src-tauri/target/
 logs/
 *.log
 
+# Cargo.lock is committed because Latch is an application.
+!frontend/src-tauri/Cargo.lock
+
 # Test files
 test-results/
 coverage/
