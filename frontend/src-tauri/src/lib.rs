@@ -5,8 +5,6 @@ mod password_generator;
 mod vault;
 mod vault_health;
 
-use auth::lockout::AuthAttemptState;
-use std::sync::Mutex;
 use std::time::SystemTime;
 use tauri::menu::{MenuBuilder, MenuItem};
 use tauri::tray::TrayIconBuilder;
@@ -14,29 +12,30 @@ use tauri::{AppHandle, Emitter, Manager};
 use tauri_plugin_global_shortcut::ShortcutState;
 use vault::SESSION_TIMEOUT_SECS;
 
-pub struct AuthState(pub Mutex<AuthAttemptState>);
-
-impl AuthState {
-    fn new() -> Self {
-        Self(Mutex::new(AuthAttemptState::new()))
-    }
-}
-
 pub fn spawn_session_timer(
     app_handle: AppHandle,
-    state_arc: std::sync::Arc<
-        std::sync::Mutex<(vault::storage::VaultStorage, vault::workspace::Workspace)>,
-    >,
+    state: std::sync::Weak<std::sync::Mutex<vault::coordinator::VaultCoordinator>>,
     session_start: SystemTime,
 ) {
     tauri::async_runtime::spawn(async move {
         tokio::time::sleep(std::time::Duration::from_secs(SESSION_TIMEOUT_SECS)).await;
-        if let Ok(mut guard) = state_arc.lock() {
-            if guard.1.session_start == Some(session_start) {
-                guard.1.lock();
+        let Some(state) = state.upgrade() else {
+            return;
+        };
+        if let Ok(mut coordinator) = state.lock() {
+            let expired = coordinator
+                .with_vault(|_, workspace| {
+                    if workspace.session_start == Some(session_start) {
+                        workspace.lock();
+                        return Ok(true);
+                    }
+                    Ok(false)
+                })
+                .unwrap_or(false);
+            if expired {
                 let _ = app_handle.emit("vault-locked", ());
             }
-        }
+        };
     });
 }
 
@@ -101,8 +100,11 @@ pub fn run() {
             let storage =
                 vault::storage::VaultStorage::new().expect("Failed to initialize vault storage");
             let workspace = vault::workspace::Workspace::new();
-            app.manage(commands::VaultState::new(storage, workspace));
-            app.manage(AuthState::new());
+            app.manage(commands::VaultState::new(
+                storage,
+                workspace,
+                app.handle().clone(),
+            ));
 
             let handle = app.handle().clone();
             app.handle().plugin(
