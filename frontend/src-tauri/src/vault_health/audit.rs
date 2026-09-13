@@ -205,6 +205,7 @@ mod tests {
             password: password.to_string(),
             url: None,
             icon_url: None,
+            totp_secret: None,
         }
     }
 
@@ -280,6 +281,7 @@ mod tests {
             password: "password123".into(),
             url: None,
             icon_url: None,
+            totp_secret: None,
         }];
         let breached = check_breach_status(&entries, &checker).await;
         assert_eq!(breached.len(), 1);
@@ -296,6 +298,7 @@ mod tests {
             password: "Str0ng!P@ss".into(),
             url: None,
             icon_url: None,
+            totp_secret: None,
         }];
         let breached = check_breach_status(&entries, &checker).await;
         assert_eq!(breached.len(), 0);

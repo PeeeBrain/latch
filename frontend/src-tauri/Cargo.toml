@@ -37,6 +37,7 @@ jsonwebtoken = "9"
 sha2 = "0.10"
 pbkdf2 = "0.12"
 base64 = "0.22"
+data-encoding = "2.9"
 tauri-plugin-google-auth = "0.5"
 tauri-plugin-biometry = "0.2"
 tauri-plugin-updater = "2"
@@ -48,8 +49,9 @@ sha1 = "0.10.6"
 reqwest = { version = "0.12", features = ["rustls-tls"] }
 zeroize = { version = "1.7", features = ["derive"] }
 url = "2.5"
-tokio = { version = "1", features = ["time"] }
+tokio = { version = "1", features = ["macros", "sync", "time"] }
+totp-lite = "2.0"
 
 [dev-dependencies]
 tempfile = "3"
-tokio = { version = "1", features = ["macros"] }
+tokio = { version = "1", features = ["macros", "rt"] }

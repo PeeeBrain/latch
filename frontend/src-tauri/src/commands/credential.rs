@@ -75,6 +75,7 @@ pub async fn add_entry(
     password: String,
     url: Option<String>,
     icon_url: Option<String>,
+    totp_secret: Option<String>,
     state: State<'_, VaultState>,
 ) -> Result<String, String> {
     validate_entry_fields(&title, &username, &password, url.as_ref())?;
@@ -87,6 +88,7 @@ pub async fn add_entry(
         password,
         url,
         icon_url,
+        totp_secret,
     };
 
     state.lock(|storage, workspace| crate::vault::entries::add(workspace, storage, entry))?;
@@ -103,12 +105,20 @@ pub async fn get_full_entry(
 
     Ok(json!({
         "status": "success",
-        "entry": entry
+        "entry": {
+            "id": entry.id.clone(),
+            "title": entry.title.clone(),
+            "username": entry.username.clone(),
+            "password": entry.password.clone(),
+            "url": entry.url.clone(),
+            "icon_url": entry.icon_url.clone(),
+        }
     })
     .to_string())
 }
 
 #[tauri::command]
+#[allow(clippy::too_many_arguments)]
 pub async fn update_entry(
     id: String,
     title: String,
@@ -116,6 +126,7 @@ pub async fn update_entry(
     password: String,
     url: Option<String>,
     icon_url: Option<String>,
+    totp_secret: Option<String>,
     state: State<'_, VaultState>,
 ) -> Result<String, String> {
     validate_entry_fields(&title, &username, &password, url.as_ref())?;
@@ -127,6 +138,7 @@ pub async fn update_entry(
         password,
         url,
         icon_url,
+        totp_secret,
     };
 
     state.lock(|storage, workspace| crate::vault::entries::update(workspace, storage, entry))?;

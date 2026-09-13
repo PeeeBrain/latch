@@ -15,6 +15,8 @@ pub fn provision(
 
     let vault_data = VaultData {
         entries: Vec::new(),
+        alias_configs: Vec::new(),
+        default_provider_id: None,
     };
     let json = serde_json::to_string(&vault_data)
         .map_err(|e| format!("Failed to serialize vault data: {}", e))?;

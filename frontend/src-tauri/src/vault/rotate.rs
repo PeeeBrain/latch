@@ -11,9 +11,7 @@ pub fn rotate(
 ) -> Result<(), String> {
     workspace.check_session()?;
 
-    let vault_data = VaultData {
-        entries: workspace.credentials.clone(),
-    };
+    let vault_data = VaultData::from_workspace(workspace);
     let json = serde_json::to_string(&vault_data)
         .map_err(|e| format!("Failed to serialize vault data: {}", e))?;
     let encrypted = aead::encrypt(new_key, &json)?;
