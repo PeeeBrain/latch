@@ -19,6 +19,9 @@ pub fn normalize_secret(input: &str) -> Result<String, String> {
     {
         return Err(format!("Invalid Base32 character '{}'", invalid));
     }
+    data_encoding::BASE32_NOPAD
+        .decode(normalized.as_bytes())
+        .map_err(|_| "TOTP secret is not valid Base32".to_string())?;
 
     Ok(normalized)
 }
@@ -30,6 +33,12 @@ pub fn extract_secret(input: &str) -> Result<String, String> {
     let trimmed = input.trim();
     if trimmed.to_ascii_lowercase().starts_with("otpauth://") {
         let url = url::Url::parse(trimmed).map_err(|e| format!("Invalid otpauth URI: {}", e))?;
+        if !url
+            .host_str()
+            .is_some_and(|host| host.eq_ignore_ascii_case("totp"))
+        {
+            return Err("Only otpauth://totp URIs are supported".to_string());
+        }
 
         for (key, value) in url.query_pairs() {
             let supported = match key.as_ref() {
@@ -121,6 +130,7 @@ mod tests {
     fn rejects_invalid_secrets() {
         assert!(normalize_secret("").is_err());
         assert!(normalize_secret("   ").is_err());
+        assert!(normalize_secret("A").is_err());
         assert!(normalize_secret("GEZD1NBV").is_err());
         assert!(generate_token("AAAA1AAA", 59).is_err());
     }
@@ -135,6 +145,11 @@ mod tests {
     #[test]
     fn rejects_otpauth_uri_without_secret() {
         assert!(extract_secret("otpauth://totp/ACME?issuer=ACME").is_err());
+    }
+
+    #[test]
+    fn rejects_non_totp_otpauth_uri() {
+        assert!(extract_secret("otpauth://hotp/ACME?secret=GEZDGNBV").is_err());
     }
 
     #[test]

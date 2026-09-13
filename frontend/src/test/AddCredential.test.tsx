@@ -88,13 +88,15 @@ describe('AddCredential 2FA secret', () => {
   it('prefills title and username from a pasted otpauth URI', () => {
     renderForm()
 
-    fireEvent.change(screen.getByPlaceholderText(TOTP_PLACEHOLDER), {
+    const totpInput = screen.getByPlaceholderText(TOTP_PLACEHOLDER)
+    fireEvent.change(totpInput, {
       target: {
         value:
           'otpauth://totp/ACME%20Co:john@example.com?secret=JBSWY3DPEHPK3PXP&issuer=ACME%20Co',
       },
     })
 
+    expect((totpInput as HTMLInputElement).value).toBe('JBSWY3DPEHPK3PXP')
     expect((screen.getByPlaceholderText('Website title...') as HTMLInputElement).value).toBe(
       'ACME Co',
     )
