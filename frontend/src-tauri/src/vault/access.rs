@@ -1,5 +1,6 @@
 use super::{storage::VaultStorage, workspace::Workspace, VaultData};
 use crate::crypto::aead;
+use zeroize::Zeroizing;
 
 pub fn access(
     storage: &VaultStorage,
@@ -11,7 +12,7 @@ pub fn access(
     }
 
     let vault = storage.read()?;
-    let decrypted = aead::decrypt(key, &vault.data)?;
+    let decrypted = Zeroizing::new(aead::decrypt(key, &vault.data)?);
     let vault_data: VaultData = serde_json::from_str(&decrypted)
         .map_err(|e| format!("Failed to parse vault data: {}", e))?;
 

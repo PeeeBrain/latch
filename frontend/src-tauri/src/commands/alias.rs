@@ -20,12 +20,36 @@ fn configured_provider(
 }
 
 #[tauri::command]
+pub async fn save_alias_config(
+    provider_id: String,
+    api_token: String,
+    state: State<'_, VaultState>,
+) -> Result<String, String> {
+    state.lock(|storage, workspace| {
+        crate::vault::alias::save_config(workspace, storage, &provider_id, &api_token)
+    })?;
+
+    Ok(json!({
+        "status": "success"
+    })
+    .to_string())
+}
+
+#[tauri::command]
 pub async fn generate_email_mask(
     provider_id: String,
     state: State<'_, VaultState>,
 ) -> Result<String, String> {
-    let config = state.lock(|_, workspace| configured_provider(workspace, &provider_id))?;
-    let email = AliasClient::new()?.generate(&config).await?;
+    let (config, mut cancel) = state.lock(|_, workspace| {
+        let config = configured_provider(workspace, &provider_id)?;
+        Ok((config, workspace.alias_cancel_receiver()))
+    })?;
+
+    let client = AliasClient::new()?;
+    let email = tokio::select! {
+        result = client.generate(&config) => result?,
+        _ = cancel.changed() => return Err("Vault was locked".to_string()),
+    };
 
     Ok(json!({
         "status": "success",

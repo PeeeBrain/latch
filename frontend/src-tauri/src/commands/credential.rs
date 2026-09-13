@@ -106,12 +106,12 @@ pub async fn get_full_entry(
     Ok(json!({
         "status": "success",
         "entry": {
-            "id": entry.id,
-            "title": entry.title,
-            "username": entry.username,
-            "password": entry.password,
-            "url": entry.url,
-            "icon_url": entry.icon_url,
+            "id": entry.id.clone(),
+            "title": entry.title.clone(),
+            "username": entry.username.clone(),
+            "password": entry.password.clone(),
+            "url": entry.url.clone(),
+            "icon_url": entry.icon_url.clone(),
         }
     })
     .to_string())

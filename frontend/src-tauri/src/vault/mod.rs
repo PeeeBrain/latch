@@ -10,10 +10,11 @@ pub mod totp;
 pub mod workspace;
 
 use serde::{Deserialize, Serialize};
+use zeroize::{Zeroize, ZeroizeOnDrop};
 
 pub const SESSION_TIMEOUT_SECS: u64 = 30 * 60;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Zeroize, ZeroizeOnDrop)]
 pub struct Entry {
     pub id: String,
     pub title: String,
@@ -33,13 +34,13 @@ pub struct EntryPreview {
     pub icon_url: Option<String>,
 }
 
-impl From<Entry> for EntryPreview {
-    fn from(entry: Entry) -> Self {
+impl From<&Entry> for EntryPreview {
+    fn from(entry: &Entry) -> Self {
         EntryPreview {
-            id: entry.id,
-            title: entry.title,
-            username: entry.username,
-            icon_url: entry.icon_url,
+            id: entry.id.clone(),
+            title: entry.title.clone(),
+            username: entry.username.clone(),
+            icon_url: entry.icon_url.clone(),
         }
     }
 }
@@ -52,7 +53,7 @@ pub struct EncryptedVault {
     pub data: crate::crypto::aead::EncryptedData,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Zeroize, ZeroizeOnDrop)]
 pub struct AliasConfig {
     pub provider_id: String,
     pub api_token: String,
@@ -107,6 +108,26 @@ mod tests {
 
         assert!(parsed.alias_configs.is_empty());
         assert!(parsed.default_provider_id.is_none());
+    }
+
+    #[test]
+    fn credential_secrets_are_zeroized_in_place() {
+        use zeroize::Zeroize;
+
+        let mut entry = Entry {
+            id: "1".to_string(),
+            title: "Example".to_string(),
+            username: "user".to_string(),
+            password: "secret".to_string(),
+            url: None,
+            icon_url: None,
+            totp_secret: Some("JBSWY3DPEHPK3PXP".to_string()),
+        };
+
+        entry.zeroize();
+
+        assert!(entry.password.is_empty());
+        assert!(entry.totp_secret.is_none());
     }
 
     #[test]

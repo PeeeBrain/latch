@@ -1,3 +1,5 @@
+use crate::vault::storage::VaultStorage;
+use crate::vault::workspace::Workspace;
 use crate::vault::AliasConfig;
 use std::future::Future;
 use std::pin::Pin;
@@ -53,6 +55,7 @@ pub struct AliasClient {
 impl AliasClient {
     pub fn new() -> Result<Self, String> {
         let client = reqwest::Client::builder()
+            .redirect(reqwest::redirect::Policy::none())
             .timeout(REQUEST_TIMEOUT)
             .build()
             .map_err(|e| format!("Failed to create HTTP client: {e}"))?;
@@ -84,6 +87,34 @@ impl AliasClient {
             transport,
         }
     }
+}
+
+pub fn save_config(
+    workspace: &mut Workspace,
+    storage: &VaultStorage,
+    provider_id: &str,
+    api_token: &str,
+) -> Result<(), String> {
+    workspace.check_session()?;
+    workspace.refresh();
+    Provider::from_id(provider_id)?;
+    if api_token.trim().is_empty() {
+        return Err("Alias API token is required".to_string());
+    }
+
+    match workspace
+        .alias_configs
+        .iter_mut()
+        .find(|config| config.provider_id == provider_id)
+    {
+        Some(config) => config.api_token = api_token.to_string(),
+        None => workspace.alias_configs.push(AliasConfig {
+            provider_id: provider_id.to_string(),
+            api_token: api_token.to_string(),
+        }),
+    }
+
+    crate::vault::entries::persist(workspace, storage)
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -321,5 +352,90 @@ mod tests {
             "Alias provider 'simplelogin' has no API token configured"
         );
         assert!(requests.lock().unwrap().is_empty());
+    }
+
+    fn storage_with_existing_vault() -> (crate::vault::storage::VaultStorage, tempfile::TempDir) {
+        let dir = tempfile::tempdir().unwrap();
+        let storage = crate::vault::storage::VaultStorage {
+            path: dir.path().join("vault.enc"),
+        };
+        storage
+            .write(&crate::vault::EncryptedVault {
+                version: "1".to_string(),
+                kdf: "argon2".to_string(),
+                salt: "00".to_string(),
+                data: crate::crypto::aead::EncryptedData {
+                    nonce: "00".to_string(),
+                    ciphertext: "00".to_string(),
+                },
+            })
+            .unwrap();
+        (storage, dir)
+    }
+
+    fn unlocked_workspace() -> crate::vault::workspace::Workspace {
+        let mut workspace = crate::vault::workspace::Workspace::new();
+        workspace.start([9u8; 32]);
+        workspace
+    }
+
+    #[test]
+    fn saved_configs_are_written_to_the_encrypted_vault() {
+        let (storage, _dir) = storage_with_existing_vault();
+        let mut workspace = unlocked_workspace();
+        let key = [9u8; 32];
+
+        save_config(&mut workspace, &storage, "simplelogin", "sl-token").unwrap();
+
+        let vault = storage.read().unwrap();
+        let decrypted = crate::crypto::aead::decrypt(&key, &vault.data).unwrap();
+        let data: crate::vault::VaultData = serde_json::from_str(&decrypted).unwrap();
+        assert_eq!(data.alias_configs.len(), 1);
+        assert_eq!(data.alias_configs[0].provider_id, "simplelogin");
+        assert_eq!(data.alias_configs[0].api_token, "sl-token");
+    }
+
+    #[test]
+    fn saving_the_same_provider_replaces_its_token() {
+        let (storage, _dir) = storage_with_existing_vault();
+        let mut workspace = unlocked_workspace();
+
+        save_config(&mut workspace, &storage, "duckduckgo", "old-token").unwrap();
+        save_config(&mut workspace, &storage, "duckduckgo", "new-token").unwrap();
+
+        assert_eq!(workspace.alias_configs.len(), 1);
+        assert_eq!(workspace.alias_configs[0].api_token, "new-token");
+    }
+
+    #[test]
+    fn unsupported_providers_are_rejected_when_saving() {
+        let (storage, _dir) = storage_with_existing_vault();
+        let mut workspace = unlocked_workspace();
+
+        let error = save_config(&mut workspace, &storage, "cloudflare", "token").unwrap_err();
+
+        assert_eq!(error, "Unsupported alias provider 'cloudflare'");
+        assert!(workspace.alias_configs.is_empty());
+    }
+
+    #[test]
+    fn empty_tokens_are_rejected_when_saving() {
+        let (storage, _dir) = storage_with_existing_vault();
+        let mut workspace = unlocked_workspace();
+
+        let error = save_config(&mut workspace, &storage, "simplelogin", "   ").unwrap_err();
+
+        assert_eq!(error, "Alias API token is required");
+        assert!(workspace.alias_configs.is_empty());
+    }
+
+    #[test]
+    fn saving_a_config_rejects_locked_vaults() {
+        let (storage, _dir) = storage_with_existing_vault();
+        let mut workspace = crate::vault::workspace::Workspace::new();
+
+        let error = save_config(&mut workspace, &storage, "simplelogin", "sl-token").unwrap_err();
+
+        assert_eq!(error, "Vault is locked");
     }
 }
