@@ -36,6 +36,12 @@ cd frontend
 
 # 1. Type check
 bun run typecheck
+
+# 2. Lint
+bun run lint
+
+# 3. Run tests
+bun run test
 ```
 
 **Common CI Failures to Avoid:**

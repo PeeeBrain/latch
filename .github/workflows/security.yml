@@ -4,13 +4,17 @@ on:
   push:
     branches: [main, develop]
     paths:
+      - 'frontend/package.json'
       - 'frontend/bun.lock'
+      - 'frontend/src-tauri/Cargo.toml'
       - 'frontend/src-tauri/Cargo.lock'
       - '.github/workflows/security.yml'
   pull_request:
     branches: [main, develop]
     paths:
+      - 'frontend/package.json'
       - 'frontend/bun.lock'
+      - 'frontend/src-tauri/Cargo.toml'
       - 'frontend/src-tauri/Cargo.lock'
       - '.github/workflows/security.yml'
   schedule:
@@ -19,6 +23,7 @@ on:
 
 permissions:
   contents: read
+  checks: write
 
 jobs:
   dependency-audit:
@@ -27,40 +32,19 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Cache Cargo registry
-        uses: actions/cache@v4
+      - name: Run Cargo audit
+        uses: rustsec/audit-check@v2.0.0
         with:
-          path: ~/.cargo/registry
-          key: ${{ runner.os }}-cargo-registry-${{ hashFiles('**/Cargo.lock') }}
-
-      - name: Install cargo-binstall
-        uses: cargo-bins/cargo-binstall@main
-
-      - name: Install cargo-audit
-        run: cargo binstall cargo-audit -y
-
-      - name: Run cargo audit
-        working-directory: ./frontend/src-tauri
-        run: cargo audit
+          token: ${{ secrets.GITHUB_TOKEN }}
+          working-directory: frontend/src-tauri
 
       - name: Setup Bun
         uses: oven-sh/setup-bun@v2
         with:
-          bun-version: latest
-
-      - name: Install dependencies
-        working-directory: ./frontend
-        run: bun install --frozen-lockfile
+          bun-version-file: frontend/package.json
 
       - name: Run frontend audit
         working-directory: ./frontend
-        run: |
-          echo '[install.security]' > bunfig.toml
-          echo 'scanner = "@bun-security-scanner/osv"' >> bunfig.toml
-          bun pm scan
-        continue-on-error: true
+        run: bun audit --audit-level=high
