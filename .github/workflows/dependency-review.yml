@@ -23,5 +23,7 @@ jobs:
       - name: Review dependency changes
         uses: actions/dependency-review-action@v4
         with:
-          # Cargo.lock is new in this PR, but glib is an existing transitive Tauri dependency.
-          allow-ghsas: GHSA-wrw7-89jp-8q8g
+          # Cargo.lock is new in this PR, so Dependency Review sees the existing dependency
+          # tree as newly added. glib is transitive through Tauri. jsonwebtoken is a direct
+          # dependency whose patched release requires Rust 1.85; Latch currently supports 1.77.2.
+          allow-ghsas: GHSA-wrw7-89jp-8q8g, GHSA-h395-gr6q-cpjc
