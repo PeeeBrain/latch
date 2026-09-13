@@ -1,7 +1,6 @@
 use crate::commands::VaultState;
 use crate::vault::Entry;
 use serde_json::json;
-use std::time::{SystemTime, UNIX_EPOCH};
 use tauri::State;
 
 /// Build the editable-payload JSON for a credential. The raw `totp_secret` is
@@ -136,27 +135,6 @@ pub async fn get_full_entry(
 }
 
 #[tauri::command]
-pub async fn get_totp_token(
-    entry_id: String,
-    state: State<'_, VaultState>,
-) -> Result<String, String> {
-    let now = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map_err(|e| format!("System clock error: {}", e))?
-        .as_secs();
-
-    let (token, remaining_seconds) =
-        state.lock(|_, workspace| crate::vault::entries::totp_token(workspace, &entry_id, now))?;
-
-    Ok(json!({
-        "status": "success",
-        "token": token,
-        "remaining_seconds": remaining_seconds
-    })
-    .to_string())
-}
-
-#[tauri::command]
 #[allow(clippy::too_many_arguments)]
 pub async fn update_entry(
     id: String,
@@ -177,12 +155,10 @@ pub async fn update_entry(
         password,
         url,
         icon_url,
-        totp_secret: None,
+        totp_secret: normalize_totp_secret(totp_secret)?,
     };
 
-    state.lock(|storage, workspace| {
-        crate::vault::entries::update(workspace, storage, entry, totp_secret)
-    })?;
+    state.lock(|storage, workspace| crate::vault::entries::update(workspace, storage, entry))?;
 
     Ok(json!({"status": "success"}).to_string())
 }

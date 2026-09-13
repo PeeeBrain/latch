@@ -1,10 +1,5 @@
-use hmac::{Hmac, Mac};
-use sha1::Sha1;
-
 pub const PERIOD_SECS: u64 = 30;
 pub const DIGITS: u32 = 6;
-
-type HmacSha1 = Hmac<Sha1>;
 
 /// Normalize a raw Base32 secret: trim, strip separators and padding, uppercase.
 /// Rejects empty input and characters outside the RFC 4648 alphabet.
@@ -46,53 +41,22 @@ pub fn extract_secret(input: &str) -> Result<String, String> {
 
 /// Generate the 6-digit TOTP for `unix_time` (RFC 6238, SHA-1).
 pub fn generate_token(secret: &str, unix_time: u64) -> Result<String, String> {
-    let key = decode_secret(&normalize_secret(secret)?)?;
-    let counter = unix_time / PERIOD_SECS;
+    let normalized = normalize_secret(secret)?;
+    let key = data_encoding::BASE32_NOPAD
+        .decode(normalized.as_bytes())
+        .map_err(|_| "TOTP secret is not valid Base32".to_string())?;
 
-    let mut mac =
-        HmacSha1::new_from_slice(&key).map_err(|e| format!("Failed to init HMAC: {}", e))?;
-    mac.update(&counter.to_be_bytes());
-    let digest = mac.finalize().into_bytes();
-
-    let offset = (digest[19] & 0x0f) as usize;
-    let binary = ((digest[offset] as u32 & 0x7f) << 24)
-        | ((digest[offset + 1] as u32) << 16)
-        | ((digest[offset + 2] as u32) << 8)
-        | (digest[offset + 3] as u32);
-    let code = binary % 10u32.pow(DIGITS);
-
-    Ok(format!("{:0>width$}", code, width = DIGITS as usize))
+    Ok(totp_lite::totp_custom::<totp_lite::Sha1>(
+        PERIOD_SECS,
+        DIGITS,
+        &key,
+        unix_time,
+    ))
 }
 
 /// Seconds remaining in the current 30-second window.
 pub fn remaining_seconds(unix_time: u64) -> u64 {
     PERIOD_SECS - (unix_time % PERIOD_SECS)
-}
-
-fn decode_secret(normalized: &str) -> Result<Vec<u8>, String> {
-    let mut bytes = Vec::with_capacity(normalized.len() * 5 / 8);
-    let mut buffer: u32 = 0;
-    let mut bits_in_buffer: u32 = 0;
-
-    for c in normalized.chars() {
-        let value = match c {
-            'A'..='Z' => c as u32 - 'A' as u32,
-            '2'..='7' => c as u32 - '2' as u32 + 26,
-            _ => return Err(format!("Invalid Base32 character '{}'", c)),
-        };
-        buffer = (buffer << 5) | value;
-        bits_in_buffer += 5;
-        if bits_in_buffer >= 8 {
-            bits_in_buffer -= 8;
-            bytes.push(((buffer >> bits_in_buffer) & 0xff) as u8);
-        }
-    }
-
-    if bytes.is_empty() {
-        return Err("TOTP secret is too short".to_string());
-    }
-
-    Ok(bytes)
 }
 
 #[cfg(test)]

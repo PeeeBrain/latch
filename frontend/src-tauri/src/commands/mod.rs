@@ -1,7 +1,9 @@
+pub mod alias;
 pub mod credential;
 pub mod generator;
 pub mod health;
 pub mod session;
+pub mod totp;
 pub mod vault;
 
 use crate::auth::authenticator::AuthCredential;
