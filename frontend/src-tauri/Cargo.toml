@@ -31,7 +31,7 @@ hex = "0.4"
 uuid = { version = "1.18", features = ["v4"] }
 fuzzy-matcher = "0.3"
 jsonwebtoken = "9"
-sha2 = "0.10"
+sha2 = "0.11"
 pbkdf2 = "0.12"
 data-encoding = "2.9"
 tauri-plugin-google-auth = "=0.5.1"
