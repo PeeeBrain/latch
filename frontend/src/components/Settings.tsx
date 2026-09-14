@@ -10,6 +10,7 @@ import {
   clearStoredKey
 } from '../utils/biometricKeys'
 import ConfirmationModal from './ConfirmationModal'
+import AliasSettings from './AliasSettings'
 import { useTheme, THEMES } from '../hooks/useTheme'
 import { api } from '../api/client'
 import { Google } from './ui/svgs/google'
@@ -419,6 +420,8 @@ function Settings() {
               </div>
             </div>
           </div>
+
+          <AliasSettings />
         </div>
 
         <div className="flex flex-col gap-4 items-start">

@@ -16,6 +16,7 @@ fn serialize_full_entry(entry: &Entry) -> String {
             "url": entry.url,
             "icon_url": entry.icon_url,
             "has_totp": entry.totp_secret.is_some(),
+            "alias_provider_id": entry.alias_provider_id,
         }
     })
     .to_string()
@@ -98,6 +99,7 @@ pub async fn request_secret(
 }
 
 #[tauri::command]
+#[allow(clippy::too_many_arguments)]
 pub async fn add_entry(
     title: String,
     username: String,
@@ -105,6 +107,7 @@ pub async fn add_entry(
     url: Option<String>,
     icon_url: Option<String>,
     totp_secret: Option<String>,
+    alias_provider_id: Option<String>,
     state: State<'_, VaultState>,
 ) -> Result<String, String> {
     validate_entry_fields(&title, &username, &password, url.as_ref())?;
@@ -118,6 +121,7 @@ pub async fn add_entry(
         url,
         icon_url,
         totp_secret: normalize_totp_secret(totp_secret)?.filter(|secret| !secret.is_empty()),
+        alias_provider_id,
     };
 
     state.lock(|storage, workspace| crate::vault::entries::add(workspace, storage, entry))?;
@@ -145,6 +149,7 @@ pub async fn update_entry(
     url: Option<String>,
     icon_url: Option<String>,
     totp_secret: Option<String>,
+    alias_provider_id: Option<String>,
     state: State<'_, VaultState>,
 ) -> Result<String, String> {
     validate_entry_fields(&title, &username, &password, url.as_ref())?;
@@ -157,6 +162,7 @@ pub async fn update_entry(
         url,
         icon_url,
         totp_secret: normalize_totp_secret(totp_secret)?,
+        alias_provider_id,
     };
 
     state.lock(|storage, workspace| crate::vault::entries::update(workspace, storage, entry))?;
@@ -188,7 +194,15 @@ mod tests {
             url: Some("https://example.com".to_string()),
             icon_url: None,
             totp_secret: Some("GEZDGNBVGY3TQOJQ".to_string()),
+            alias_provider_id: Some("simplelogin".to_string()),
         }
+    }
+
+    #[test]
+    fn full_entry_payload_includes_alias_provider_id() {
+        let payload = serialize_full_entry(&entry_with_secret());
+
+        assert!(payload.contains("\"alias_provider_id\":\"simplelogin\""));
     }
 
     #[test]

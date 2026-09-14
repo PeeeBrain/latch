@@ -131,6 +131,64 @@ describe('api client response parsing', () => {
     })
     expect(invokeMock).toHaveBeenCalledWith('get_totp_token', { entryId: 'entry-1' })
   })
+
+  test('addEntry forwards the alias provider id', async () => {
+    invokeMock.mockResolvedValue(JSON.stringify({ status: 'success', id: 'entry-1' }))
+
+    await api.addEntry({
+      title: 'Example',
+      username: 'mask@simplelogin.com',
+      password: 'secret',
+      aliasProviderId: 'simplelogin',
+    })
+
+    expect(invokeMock).toHaveBeenCalledWith(
+      'add_entry',
+      expect.objectContaining({ aliasProviderId: 'simplelogin' })
+    )
+  })
+
+  test('listAliasConfigs exposes providers and the default without tokens', async () => {
+    invokeMock.mockResolvedValue(
+      JSON.stringify({
+        status: 'success',
+        configs: [
+          { provider_id: 'simplelogin', description: 'Personal' },
+          { provider_id: 'duckduckgo' },
+        ],
+        default_provider_id: 'simplelogin',
+      })
+    )
+
+    await expect(api.listAliasConfigs()).resolves.toEqual({
+      configs: [
+        { provider_id: 'simplelogin', description: 'Personal' },
+        { provider_id: 'duckduckgo' },
+      ],
+      default_provider_id: 'simplelogin',
+    })
+  })
+
+  test('generateEmailMask returns the generated address', async () => {
+    invokeMock.mockResolvedValue(
+      JSON.stringify({ status: 'success', email: 'abc123@simplelogin.com' })
+    )
+
+    await expect(api.generateEmailMask('simplelogin')).resolves.toBe('abc123@simplelogin.com')
+    expect(invokeMock).toHaveBeenCalledWith('generate_email_mask', { providerId: 'simplelogin' })
+  })
+
+  test('saveAliasConfig sends the provider, token and description', async () => {
+    invokeMock.mockResolvedValue(JSON.stringify({ status: 'success' }))
+
+    await api.saveAliasConfig('duckduckgo', 'token-1', 'Work')
+
+    expect(invokeMock).toHaveBeenCalledWith('save_alias_config', {
+      providerId: 'duckduckgo',
+      apiToken: 'token-1',
+      description: 'Work',
+    })
+  })
 })
 
 

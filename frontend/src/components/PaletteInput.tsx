@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { LucideIcon, Eye, EyeOff, Copy } from 'lucide-react'
 import { useClipboardGuard } from '../hooks/useClipboardGuard'
 
@@ -13,6 +13,7 @@ interface PaletteInputProps {
   hint?: string
   disabled?: boolean
   iconSpin?: boolean
+  action?: ReactNode
 }
 
 function PaletteInput({
@@ -26,6 +27,7 @@ function PaletteInput({
   hint,
   disabled = false,
   iconSpin = false,
+  action,
 }: PaletteInputProps) {
   const inputRef = useRef<HTMLInputElement>(null)
   const [showPassword, setShowPassword] = useState(false)
@@ -86,6 +88,7 @@ function PaletteInput({
             </button>
           </div>
         )}
+        {action}
         {hint && (
           <span className="text-xs text-theme-bg bg-theme-text border-2 border-theme-text font-extrabold flex-shrink-0 tracking-wider uppercase shadow-theme-sm px-3 py-1.5">
             {hint}

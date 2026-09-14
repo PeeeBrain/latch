@@ -41,6 +41,7 @@ mod tests {
             url: None,
             icon_url: None,
             totp_secret: None,
+            alias_provider_id: None,
         });
         workspace.start([5u8; 32]);
         workspace.session_start =

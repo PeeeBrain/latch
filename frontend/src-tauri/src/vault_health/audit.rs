@@ -206,6 +206,7 @@ mod tests {
             url: None,
             icon_url: None,
             totp_secret: None,
+            alias_provider_id: None,
         }
     }
 
@@ -282,6 +283,7 @@ mod tests {
             url: None,
             icon_url: None,
             totp_secret: None,
+            alias_provider_id: None,
         }];
         let breached = check_breach_status(&entries, &checker).await;
         assert_eq!(breached.len(), 1);
@@ -299,6 +301,7 @@ mod tests {
             url: None,
             icon_url: None,
             totp_secret: None,
+            alias_provider_id: None,
         }];
         let breached = check_breach_status(&entries, &checker).await;
         assert_eq!(breached.len(), 0);

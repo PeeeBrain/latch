@@ -9,6 +9,8 @@ import {
   TotpTokenResponseSchema,
   VaultStatusResponseSchema,
   VaultHealthReportSchema,
+  AliasConfigsResponseSchema,
+  EmailMaskResponseSchema,
   type Credential,
   type CredentialPreview,
   type PasswordOptions,
@@ -93,7 +95,7 @@ export const api = {
 
   async addEntry(entry: {
     title: string; username: string; password: string;
-    url?: string; iconUrl?: string; totpSecret?: string;
+    url?: string; iconUrl?: string; totpSecret?: string; aliasProviderId?: string;
   }): Promise<string> {
     const result = await invoke('add_entry', entry)
     return AddEntryResponseSchema.parse(JSON.parse(result as string)).id
@@ -102,6 +104,7 @@ export const api = {
   async updateEntry(entry: {
     id: string; title: string; username: string;
     password: string; url?: string; iconUrl?: string; totpSecret?: string;
+    aliasProviderId?: string;
   }): Promise<void> {
     const result = await invoke('update_entry', entry)
     parse(result, ResponseSchema)
@@ -110,6 +113,36 @@ export const api = {
   async deleteEntry(entryId: string): Promise<void> {
     const result = await invoke('delete_entry', { entryId })
     parse(result, ResponseSchema)
+  },
+
+  // Email aliases
+  async listAliasConfigs(): Promise<{
+    configs: { provider_id: string; description?: string | null }[];
+    default_provider_id: string | null;
+  }> {
+    const result = await invoke('list_alias_configs')
+    const parsed = AliasConfigsResponseSchema.parse(JSON.parse(result as string))
+    return { configs: parsed.configs, default_provider_id: parsed.default_provider_id ?? null }
+  },
+
+  async saveAliasConfig(providerId: string, apiToken: string, description?: string): Promise<void> {
+    const result = await invoke('save_alias_config', { providerId, apiToken, description })
+    parse(result, ResponseSchema)
+  },
+
+  async deleteAliasConfig(providerId: string): Promise<void> {
+    const result = await invoke('delete_alias_config', { providerId })
+    parse(result, ResponseSchema)
+  },
+
+  async setDefaultAliasProvider(providerId: string): Promise<void> {
+    const result = await invoke('set_default_alias_provider', { providerId })
+    parse(result, ResponseSchema)
+  },
+
+  async generateEmailMask(providerId: string): Promise<string> {
+    const result = await invoke('generate_email_mask', { providerId })
+    return EmailMaskResponseSchema.parse(JSON.parse(result as string)).email
   },
 
   // Password generator
