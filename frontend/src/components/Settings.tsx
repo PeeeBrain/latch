@@ -420,12 +420,10 @@ function Settings() {
               </div>
             </div>
           </div>
-
-          <AliasSettings />
         </div>
 
         <div className="flex flex-col gap-4 items-start">
-          <div>
+          <div className="w-full">
             <header className="flex items-baseline justify-between gap-3 flex-wrap pb-2.5 border-b border-theme-border mb-4">
               <h2 className="font-theme text-2xl font-semibold tracking-wide text-theme-accent">Updates</h2>
               <div className="flex items-center gap-2.5">
@@ -466,6 +464,8 @@ function Settings() {
               )}
             </div>
           </div>
+
+          <AliasSettings />
         </div>
       </div>
 
