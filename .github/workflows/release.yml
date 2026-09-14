@@ -33,14 +33,14 @@ jobs:
     runs-on: ${{ matrix.platform }}
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           ref: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref }}
 
       - name: Setup Bun
         uses: oven-sh/setup-bun@v2
         with:
-          bun-version: latest
+          bun-version-file: frontend/package.json
 
       - name: Verify release tag
         env:
@@ -48,7 +48,7 @@ jobs:
         run: bun -e 'const config = await Bun.file("frontend/src-tauri/tauri.conf.json").json(); const expected = `v${config.version}`; if (process.env.RELEASE_TAG !== expected) { console.error(`Expected tag ${expected}, got ${process.env.RELEASE_TAG}`); process.exit(1); }'
 
       - name: Install Rust stable
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@1.98.1
         with:
           targets: ${{ matrix.platform == 'macos-latest' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
 
@@ -59,7 +59,7 @@ jobs:
 
       - name: Install frontend dependencies
         working-directory: frontend
-        run: bun install --frozen-lockfile
+        run: bun ci
 
       - name: Decode signing key
         shell: bash

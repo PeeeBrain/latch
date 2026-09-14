@@ -18,10 +18,10 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Review dependency changes
-        uses: actions/dependency-review-action@v4
+        uses: actions/dependency-review-action@v5
         with:
           # Cargo.lock is new in this PR, so Dependency Review sees the existing dependency
           # tree as newly added. glib is transitive through Tauri. jsonwebtoken is a direct

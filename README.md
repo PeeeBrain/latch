@@ -66,7 +66,6 @@ Builds and releases are handled by GitHub Actions CI. See `.github/workflows/rel
 frontend/          # Tauri v2 + React + TypeScript (api/, components/, hooks/, utils/)
 frontend/src-tauri/ # Rust backend (auth/, commands/, crypto/, vault/, vault_health/)
 docs/adr/          # Architecture Decision Records
-build.toml         # Build configuration
 ```
 
 ## Security
@@ -89,7 +88,7 @@ build.toml         # Build configuration
 ## Troubleshooting
 
 - **Vault not opening?** Check you're using the correct auth method and credentials.
-- **Frontend not building?** Ensure you have `bun` and the correct Node version installed.
+- **Frontend not building?** Ensure you have the project Bun version installed.
 - **Tauri build failing?** Check missing system dependencies (e.g. `libwebkit2gtk-4.0-dev` on Linux).
 
 ## Contributing
@@ -107,7 +106,7 @@ cd frontend && bun run typecheck
 
 ## Acknowledgments
 
-- Built with [Tauri](https://tauri.app), [React](https://reactjs.org), and [shadcn/ui](https://ui.shadcn.com)
+- Built with [Tauri](https://tauri.app), React, and Tailwind CSS
 - Cryptographic functions powered by `aes-gcm`, `argon2`, and `pbkdf2`
 - Password strength via `zxcvbn`
 - Breach checking via [Have I Been Pwned](https://haveibeenpwned.com) k-anonymity API

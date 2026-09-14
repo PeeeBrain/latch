@@ -4,7 +4,7 @@ Thanks for contributing to Latch.
 
 ## Development setup
 
-1. Make sure you have Node.js, bun, and Rust installed.
+1. Make sure you have Bun and Rust installed.
 2. Clone the repository.
 3. Install frontend dependencies:
    ```bash
