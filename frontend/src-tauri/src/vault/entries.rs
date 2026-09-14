@@ -99,6 +99,7 @@ mod tests {
             url: None,
             icon_url: None,
             totp_secret: None,
+            alias_provider_id: None,
         });
         workspace.start([7u8; 32]);
         workspace
@@ -132,6 +133,7 @@ mod tests {
             url: None,
             icon_url: None,
             totp_secret: totp_secret.map(str::to_string),
+            alias_provider_id: None,
         }
     }
 
@@ -159,6 +161,17 @@ mod tests {
         update(&mut workspace, &storage, replacement(Some("NEW"))).unwrap();
 
         assert_eq!(workspace.credentials[0].totp_secret.as_deref(), Some("NEW"));
+    }
+
+    #[test]
+    fn update_replaces_the_stored_alias_provider_id() {
+        let (storage, _dir) = test_storage();
+        let mut workspace = unlocked_workspace();
+        workspace.credentials[0].alias_provider_id = Some("simplelogin".to_string());
+
+        update(&mut workspace, &storage, replacement(None)).unwrap();
+
+        assert_eq!(workspace.credentials[0].alias_provider_id, None);
     }
 
     #[test]

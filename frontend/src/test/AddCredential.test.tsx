@@ -1,9 +1,15 @@
-import { render, screen, fireEvent, waitFor } from '@testing-library/react'
+import { render, screen, fireEvent, waitFor, act } from '@testing-library/react'
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import AddCredential from '../components/modes/AddCredential'
 
 vi.mock('../api/client', () => ({
-  api: { addEntry: vi.fn(), updateEntry: vi.fn(), getFullEntry: vi.fn() },
+  api: {
+    addEntry: vi.fn(),
+    updateEntry: vi.fn(),
+    getFullEntry: vi.fn(),
+    listAliasConfigs: vi.fn(),
+    generateEmailMask: vi.fn(),
+  },
 }))
 
 import { api } from '../api/client'
@@ -11,21 +17,39 @@ import { api } from '../api/client'
 const addEntry = vi.mocked(api.addEntry)
 const updateEntry = vi.mocked(api.updateEntry)
 const getFullEntry = vi.mocked(api.getFullEntry)
+const listAliasConfigs = vi.mocked(api.listAliasConfigs)
+const generateEmailMask = vi.mocked(api.generateEmailMask)
 
 const TOTP_PLACEHOLDER = '2FA secret or otpauth:// link (optional)...'
 const EDIT_TOTP_PLACEHOLDER = 'Edit 2FA secret or otpauth:// link (blank keeps current)...'
+const SIMPLELOGIN = { provider_id: 'simplelogin', description: 'Personal' }
+const DUCKDUCKGO = { provider_id: 'duckduckgo', description: null }
 
-function renderForm() {
+function renderForm(
+  options: {
+    onModeChange?: (mode: string) => void
+    configs?: unknown[]
+    defaultProviderId?: string | null
+  } = {},
+) {
+  listAliasConfigs.mockResolvedValue({
+    configs: (options.configs ?? []) as never,
+    default_provider_id: options.defaultProviderId ?? null,
+  })
   return render(
     <AddCredential
       editEntry={null}
       prefillTitle=""
       generatedPassword=""
-      onModeChange={vi.fn()}
+      onModeChange={(options.onModeChange ?? vi.fn()) as never}
       onCredentialsChanged={vi.fn()}
     />,
   )
 }
+
+beforeEach(() => {
+  listAliasConfigs.mockResolvedValue({ configs: [], default_provider_id: null })
+})
 
 function renderEditForm() {
   return render(
@@ -140,6 +164,129 @@ describe('AddCredential 2FA secret', () => {
 
     await waitFor(() => expect(updateEntry).toHaveBeenCalledTimes(1))
     expect(updateEntry).toHaveBeenCalledWith(expect.objectContaining({ totpSecret: '' }))
+  })
+})
+
+describe('AddCredential email alias masks', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    addEntry.mockResolvedValue('new-id')
+    listAliasConfigs.mockResolvedValue({
+      configs: [SIMPLELOGIN, DUCKDUCKGO],
+      default_provider_id: 'simplelogin',
+    })
+    generateEmailMask.mockResolvedValue('mask@simplelogin.com')
+  })
+
+  const usernameInput = () =>
+    screen.getByPlaceholderText('Username or email...') as HTMLInputElement
+
+  it('generates a mask for the default provider and prefills the username', async () => {
+    renderForm({ configs: [SIMPLELOGIN, DUCKDUCKGO], defaultProviderId: 'simplelogin' })
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Generate email mask' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Default (SimpleLogin)' }))
+
+    await waitFor(() => expect(generateEmailMask).toHaveBeenCalledWith('simplelogin'))
+    await waitFor(() => expect(usernameInput().value).toBe('mask@simplelogin.com'))
+  })
+
+  it('generates a mask from a specific provider', async () => {
+    generateEmailMask.mockResolvedValue('abc@duck.com')
+    renderForm({ configs: [SIMPLELOGIN, DUCKDUCKGO], defaultProviderId: 'simplelogin' })
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Generate email mask' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'DuckDuckGo' }))
+
+    await waitFor(() => expect(generateEmailMask).toHaveBeenCalledWith('duckduckgo'))
+    await waitFor(() => expect(usernameInput().value).toBe('abc@duck.com'))
+  })
+
+  it('saves the alias provider id with the credential', async () => {
+    renderForm({ configs: [SIMPLELOGIN], defaultProviderId: 'simplelogin' })
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Generate email mask' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Default (SimpleLogin)' }))
+    await waitFor(() => expect(usernameInput().value).toBe('mask@simplelogin.com'))
+
+    fireEvent.change(screen.getByPlaceholderText('Website title...'), { target: { value: 'Acme' } })
+    fireEvent.change(screen.getByPlaceholderText('Password...'), { target: { value: 'hunter2' } })
+    fireEvent.keyDown(window, { key: 'Enter' })
+
+    await waitFor(() => expect(addEntry).toHaveBeenCalledTimes(1))
+    expect(addEntry).toHaveBeenCalledWith(
+      expect.objectContaining({ aliasProviderId: 'simplelogin' }),
+    )
+  })
+
+  it('generates a mask with the default provider on Ctrl+E', async () => {
+    renderForm({ configs: [SIMPLELOGIN], defaultProviderId: 'simplelogin' })
+    await screen.findByRole('button', { name: 'Generate email mask' })
+
+    fireEvent.keyDown(window, { key: 'e', ctrlKey: true })
+
+    await waitFor(() => expect(generateEmailMask).toHaveBeenCalledWith('simplelogin'))
+    await waitFor(() => expect(usernameInput().value).toBe('mask@simplelogin.com'))
+  })
+
+  it('guides to settings on Ctrl+E when no default provider exists', async () => {
+    const onModeChange = vi.fn()
+    renderForm({ configs: [SIMPLELOGIN], defaultProviderId: null, onModeChange })
+    await screen.findByRole('button', { name: 'Generate email mask' })
+
+    fireEvent.keyDown(window, { key: 'e', ctrlKey: true })
+
+    expect(await screen.findByText('No default alias provider configured')).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: 'Open Settings' }))
+    expect(onModeChange).toHaveBeenCalledWith('settings')
+  })
+
+  it('ignores a second generation request while one is pending', async () => {
+    let resolveMask: (value: string) => void = () => {}
+    generateEmailMask.mockImplementation(
+      () =>
+        new Promise<string>((resolve) => {
+          resolveMask = resolve
+        }),
+    )
+    renderForm({ configs: [SIMPLELOGIN, DUCKDUCKGO], defaultProviderId: 'simplelogin' })
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Generate email mask' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'SimpleLogin' }))
+    fireEvent.click(screen.getByRole('button', { name: 'DuckDuckGo' }))
+
+    expect(generateEmailMask).toHaveBeenCalledTimes(1)
+
+    await act(async () => resolveMask('mask@simplelogin.com'))
+    await waitFor(() => expect(usernameInput().value).toBe('mask@simplelogin.com'))
+  })
+
+  it('drops the provider metadata when the username is edited manually', async () => {
+    renderForm({ configs: [SIMPLELOGIN], defaultProviderId: 'simplelogin' })
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Generate email mask' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Default (SimpleLogin)' }))
+    await waitFor(() => expect(usernameInput().value).toBe('mask@simplelogin.com'))
+
+    fireEvent.change(usernameInput(), { target: { value: 'someone@example.com' } })
+    fireEvent.change(screen.getByPlaceholderText('Website title...'), { target: { value: 'Acme' } })
+    fireEvent.change(screen.getByPlaceholderText('Password...'), { target: { value: 'hunter2' } })
+    fireEvent.keyDown(window, { key: 'Enter' })
+
+    await waitFor(() => expect(addEntry).toHaveBeenCalledTimes(1))
+    expect(addEntry).toHaveBeenCalledWith(
+      expect.objectContaining({ aliasProviderId: undefined }),
+    )
+  })
+
+  it('shows generation errors below the username field', async () => {
+    generateEmailMask.mockRejectedValue(new Error('Invalid token'))
+    renderForm({ configs: [SIMPLELOGIN], defaultProviderId: 'simplelogin' })
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Generate email mask' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Default (SimpleLogin)' }))
+
+    expect(await screen.findByText('Invalid token')).toBeTruthy()
   })
 })
 

@@ -67,6 +67,7 @@ mod tests {
             url: None,
             icon_url: None,
             totp_secret: Some("GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ".to_string()),
+            alias_provider_id: None,
         });
         workspace.start([7; 32]);
 

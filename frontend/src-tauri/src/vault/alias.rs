@@ -94,6 +94,7 @@ pub fn save_config(
     storage: &VaultStorage,
     provider_id: &str,
     api_token: &str,
+    description: Option<&str>,
 ) -> Result<(), String> {
     workspace.check_session()?;
     workspace.refresh();
@@ -102,18 +103,85 @@ pub fn save_config(
         return Err("Alias API token is required".to_string());
     }
 
+    let description = description
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string);
+
     match workspace
         .alias_configs
         .iter_mut()
         .find(|config| config.provider_id == provider_id)
     {
-        Some(config) => config.api_token = api_token.to_string(),
+        Some(config) => {
+            config.api_token = api_token.to_string();
+            config.description = description;
+        }
         None => workspace.alias_configs.push(AliasConfig {
             provider_id: provider_id.to_string(),
             api_token: api_token.to_string(),
+            description,
         }),
     }
 
+    crate::vault::entries::persist(workspace, storage)
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+pub struct AliasProviderInfo {
+    pub provider_id: String,
+    pub description: Option<String>,
+}
+
+/// List configured providers for display. The API token is never included.
+pub fn list_configs(workspace: &mut Workspace) -> Result<Vec<AliasProviderInfo>, String> {
+    workspace.check_session()?;
+    workspace.refresh();
+    Ok(workspace
+        .alias_configs
+        .iter()
+        .map(|config| AliasProviderInfo {
+            provider_id: config.provider_id.clone(),
+            description: config.description.clone(),
+        })
+        .collect())
+}
+
+pub fn delete_config(
+    workspace: &mut Workspace,
+    storage: &VaultStorage,
+    provider_id: &str,
+) -> Result<(), String> {
+    workspace.check_session()?;
+    workspace.refresh();
+    let len_before = workspace.alias_configs.len();
+    workspace
+        .alias_configs
+        .retain(|config| config.provider_id != provider_id);
+    if workspace.alias_configs.len() == len_before {
+        return Err(format!("Alias provider '{provider_id}' is not configured"));
+    }
+    if workspace.default_provider_id.as_deref() == Some(provider_id) {
+        workspace.default_provider_id = None;
+    }
+    crate::vault::entries::persist(workspace, storage)
+}
+
+pub fn set_default_config(
+    workspace: &mut Workspace,
+    storage: &VaultStorage,
+    provider_id: &str,
+) -> Result<(), String> {
+    workspace.check_session()?;
+    workspace.refresh();
+    if !workspace
+        .alias_configs
+        .iter()
+        .any(|config| config.provider_id == provider_id)
+    {
+        return Err(format!("Alias provider '{provider_id}' is not configured"));
+    }
+    workspace.default_provider_id = Some(provider_id.to_string());
     crate::vault::entries::persist(workspace, storage)
 }
 
@@ -222,6 +290,7 @@ mod tests {
         AliasConfig {
             provider_id: provider_id.to_string(),
             api_token: api_token.to_string(),
+            description: None,
         }
     }
 
@@ -385,7 +454,7 @@ mod tests {
         let mut workspace = unlocked_workspace();
         let key = [9u8; 32];
 
-        save_config(&mut workspace, &storage, "simplelogin", "sl-token").unwrap();
+        save_config(&mut workspace, &storage, "simplelogin", "sl-token", None).unwrap();
 
         let vault = storage.read().unwrap();
         let decrypted = crate::crypto::aead::decrypt(&key, &vault.data).unwrap();
@@ -396,15 +465,147 @@ mod tests {
     }
 
     #[test]
+    fn saved_configs_store_the_description() {
+        let (storage, _dir) = storage_with_existing_vault();
+        let mut workspace = unlocked_workspace();
+        let key = [9u8; 32];
+
+        save_config(
+            &mut workspace,
+            &storage,
+            "simplelogin",
+            "sl-token",
+            Some("Personal"),
+        )
+        .unwrap();
+
+        let vault = storage.read().unwrap();
+        let decrypted = crate::crypto::aead::decrypt(&key, &vault.data).unwrap();
+        let data: crate::vault::VaultData = serde_json::from_str(&decrypted).unwrap();
+        assert_eq!(
+            data.alias_configs[0].description.as_deref(),
+            Some("Personal")
+        );
+    }
+
+    #[test]
     fn saving_the_same_provider_replaces_its_token() {
         let (storage, _dir) = storage_with_existing_vault();
         let mut workspace = unlocked_workspace();
 
-        save_config(&mut workspace, &storage, "duckduckgo", "old-token").unwrap();
-        save_config(&mut workspace, &storage, "duckduckgo", "new-token").unwrap();
+        save_config(&mut workspace, &storage, "duckduckgo", "old-token", None).unwrap();
+        save_config(&mut workspace, &storage, "duckduckgo", "new-token", None).unwrap();
 
         assert_eq!(workspace.alias_configs.len(), 1);
         assert_eq!(workspace.alias_configs[0].api_token, "new-token");
+    }
+
+    #[test]
+    fn listing_configs_preserves_display_fields_in_creation_order() {
+        let (storage, _dir) = storage_with_existing_vault();
+        let mut workspace = unlocked_workspace();
+
+        save_config(
+            &mut workspace,
+            &storage,
+            "simplelogin",
+            "sl-token",
+            Some("Work"),
+        )
+        .unwrap();
+        save_config(&mut workspace, &storage, "duckduckgo", "ddg-token", None).unwrap();
+
+        let configs = list_configs(&mut workspace).unwrap();
+
+        assert_eq!(
+            configs,
+            vec![
+                AliasProviderInfo {
+                    provider_id: "simplelogin".to_string(),
+                    description: Some("Work".to_string()),
+                },
+                AliasProviderInfo {
+                    provider_id: "duckduckgo".to_string(),
+                    description: None,
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn listing_configs_rejects_locked_vaults() {
+        let mut workspace = crate::vault::workspace::Workspace::new();
+
+        let error = list_configs(&mut workspace).unwrap_err();
+
+        assert_eq!(error, "Vault is locked");
+    }
+
+    #[test]
+    fn deleting_a_config_removes_it_from_the_vault() {
+        let (storage, _dir) = storage_with_existing_vault();
+        let mut workspace = unlocked_workspace();
+        let key = [9u8; 32];
+
+        save_config(&mut workspace, &storage, "simplelogin", "sl-token", None).unwrap();
+        save_config(&mut workspace, &storage, "duckduckgo", "ddg-token", None).unwrap();
+
+        delete_config(&mut workspace, &storage, "simplelogin").unwrap();
+
+        let vault = storage.read().unwrap();
+        let decrypted = crate::crypto::aead::decrypt(&key, &vault.data).unwrap();
+        let data: crate::vault::VaultData = serde_json::from_str(&decrypted).unwrap();
+        assert_eq!(data.alias_configs.len(), 1);
+        assert_eq!(data.alias_configs[0].provider_id, "duckduckgo");
+    }
+
+    #[test]
+    fn deleting_the_default_provider_clears_the_default() {
+        let (storage, _dir) = storage_with_existing_vault();
+        let mut workspace = unlocked_workspace();
+
+        save_config(&mut workspace, &storage, "simplelogin", "sl-token", None).unwrap();
+        set_default_config(&mut workspace, &storage, "simplelogin").unwrap();
+
+        delete_config(&mut workspace, &storage, "simplelogin").unwrap();
+
+        assert_eq!(workspace.default_provider_id, None);
+    }
+
+    #[test]
+    fn deleting_an_unconfigured_provider_is_rejected() {
+        let (storage, _dir) = storage_with_existing_vault();
+        let mut workspace = unlocked_workspace();
+
+        let error = delete_config(&mut workspace, &storage, "simplelogin").unwrap_err();
+
+        assert_eq!(error, "Alias provider 'simplelogin' is not configured");
+    }
+
+    #[test]
+    fn setting_a_default_provider_persists_it() {
+        let (storage, _dir) = storage_with_existing_vault();
+        let mut workspace = unlocked_workspace();
+        let key = [9u8; 32];
+
+        save_config(&mut workspace, &storage, "duckduckgo", "ddg-token", None).unwrap();
+        set_default_config(&mut workspace, &storage, "duckduckgo").unwrap();
+
+        let vault = storage.read().unwrap();
+        let decrypted = crate::crypto::aead::decrypt(&key, &vault.data).unwrap();
+        let data: crate::vault::VaultData = serde_json::from_str(&decrypted).unwrap();
+        assert_eq!(data.default_provider_id.as_deref(), Some("duckduckgo"));
+    }
+
+    #[test]
+    fn setting_a_default_provider_rejects_unconfigured_providers() {
+        let (storage, _dir) = storage_with_existing_vault();
+        let mut workspace = unlocked_workspace();
+
+        let error = set_default_config(&mut workspace, &storage, "simplelogin").unwrap_err();
+
+        assert_eq!(error, "Alias provider 'simplelogin' is not configured");
+        assert_eq!(workspace.default_provider_id, None);
     }
 
     #[test]
@@ -412,7 +613,7 @@ mod tests {
         let (storage, _dir) = storage_with_existing_vault();
         let mut workspace = unlocked_workspace();
 
-        let error = save_config(&mut workspace, &storage, "cloudflare", "token").unwrap_err();
+        let error = save_config(&mut workspace, &storage, "cloudflare", "token", None).unwrap_err();
 
         assert_eq!(error, "Unsupported alias provider 'cloudflare'");
         assert!(workspace.alias_configs.is_empty());
@@ -423,7 +624,7 @@ mod tests {
         let (storage, _dir) = storage_with_existing_vault();
         let mut workspace = unlocked_workspace();
 
-        let error = save_config(&mut workspace, &storage, "simplelogin", "   ").unwrap_err();
+        let error = save_config(&mut workspace, &storage, "simplelogin", "   ", None).unwrap_err();
 
         assert_eq!(error, "Alias API token is required");
         assert!(workspace.alias_configs.is_empty());
@@ -434,7 +635,8 @@ mod tests {
         let (storage, _dir) = storage_with_existing_vault();
         let mut workspace = crate::vault::workspace::Workspace::new();
 
-        let error = save_config(&mut workspace, &storage, "simplelogin", "sl-token").unwrap_err();
+        let error =
+            save_config(&mut workspace, &storage, "simplelogin", "sl-token", None).unwrap_err();
 
         assert_eq!(error, "Vault is locked");
     }

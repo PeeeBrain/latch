@@ -23,16 +23,69 @@ fn configured_provider(
 pub async fn save_alias_config(
     provider_id: String,
     api_token: String,
+    description: Option<String>,
     state: State<'_, VaultState>,
 ) -> Result<String, String> {
     state.lock(|storage, workspace| {
-        crate::vault::alias::save_config(workspace, storage, &provider_id, &api_token)
+        crate::vault::alias::save_config(
+            workspace,
+            storage,
+            &provider_id,
+            &api_token,
+            description.as_deref(),
+        )
     })?;
 
     Ok(json!({
         "status": "success"
     })
     .to_string())
+}
+
+fn alias_configs_payload(
+    configs: Vec<crate::vault::alias::AliasProviderInfo>,
+    default_provider_id: Option<String>,
+) -> String {
+    json!({
+        "status": "success",
+        "configs": configs,
+        "default_provider_id": default_provider_id,
+    })
+    .to_string()
+}
+
+#[tauri::command]
+pub async fn list_alias_configs(state: State<'_, VaultState>) -> Result<String, String> {
+    let (configs, default_provider_id) = state.lock(|_, workspace| {
+        let configs = crate::vault::alias::list_configs(workspace)?;
+        Ok((configs, workspace.default_provider_id.clone()))
+    })?;
+
+    Ok(alias_configs_payload(configs, default_provider_id))
+}
+
+#[tauri::command]
+pub async fn delete_alias_config(
+    provider_id: String,
+    state: State<'_, VaultState>,
+) -> Result<String, String> {
+    state.lock(|storage, workspace| {
+        crate::vault::alias::delete_config(workspace, storage, &provider_id)
+    })?;
+
+    Ok(json!({ "status": "success" }).to_string())
+}
+
+#[tauri::command]
+pub async fn set_default_alias_provider(
+    provider_id: String,
+    state: State<'_, VaultState>,
+) -> Result<String, String> {
+    state.lock(|storage, workspace| {
+        crate::vault::alias::set_default_config(workspace, storage, &provider_id)
+    })?;
+
+    Ok(json!({ "status": "success" }).to_string())
 }
 
 #[tauri::command]
@@ -68,9 +121,26 @@ mod tests {
         workspace.alias_configs.push(AliasConfig {
             provider_id: "simplelogin".to_string(),
             api_token: "sl-token".to_string(),
+            description: None,
         });
         workspace.start([3u8; 32]);
         workspace
+    }
+
+    #[test]
+    fn alias_configs_payload_exposes_providers_without_tokens() {
+        let payload = alias_configs_payload(
+            vec![crate::vault::alias::AliasProviderInfo {
+                provider_id: "simplelogin".to_string(),
+                description: Some("Work".to_string()),
+            }],
+            Some("simplelogin".to_string()),
+        );
+
+        assert!(payload.contains("\"provider_id\":\"simplelogin\""));
+        assert!(payload.contains("\"description\":\"Work\""));
+        assert!(payload.contains("\"default_provider_id\":\"simplelogin\""));
+        assert!(!payload.contains("api_token"));
     }
 
     #[test]

@@ -10,6 +10,7 @@ export const CredentialSchema = z.object({
   url: OptionalStringSchema,
   icon_url: OptionalStringSchema,
   has_totp: z.boolean().optional(),
+  alias_provider_id: OptionalStringSchema,
 })
 export type Credential = z.infer<typeof CredentialSchema>
 
@@ -66,6 +67,24 @@ export const TotpTokenResponseSchema = z.object({
   status: z.literal('success'),
   token: z.string(),
   remaining_seconds: z.number(),
+})
+
+export const AliasProviderSchema = z.object({
+  provider_id: z.string(),
+  description: OptionalStringSchema,
+})
+export type AliasProvider = z.infer<typeof AliasProviderSchema>
+
+export const AliasConfigsResponseSchema = z.object({
+  status: z.literal('success'),
+  configs: z.array(AliasProviderSchema),
+  default_provider_id: OptionalStringSchema,
+})
+export type AliasConfigsResponse = z.infer<typeof AliasConfigsResponseSchema>
+
+export const EmailMaskResponseSchema = z.object({
+  status: z.literal('success'),
+  email: z.string(),
 })
 
 export const PasswordOptionsSchema = z.object({

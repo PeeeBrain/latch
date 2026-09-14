@@ -51,6 +51,7 @@ mod tests {
             url: None,
             icon_url: None,
             totp_secret,
+            alias_provider_id: None,
         }
     }
 

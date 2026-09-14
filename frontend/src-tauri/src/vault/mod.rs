@@ -24,6 +24,8 @@ pub struct Entry {
     pub icon_url: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub totp_secret: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub alias_provider_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -59,6 +61,8 @@ pub struct EncryptedVault {
 pub struct AliasConfig {
     pub provider_id: String,
     pub api_token: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -91,6 +95,7 @@ mod tests {
             alias_configs: vec![AliasConfig {
                 provider_id: "simplelogin".to_string(),
                 api_token: "sl-token".to_string(),
+                description: Some("Personal".to_string()),
             }],
             default_provider_id: Some("simplelogin".to_string()),
         };
@@ -124,12 +129,31 @@ mod tests {
             url: None,
             icon_url: None,
             totp_secret: Some("JBSWY3DPEHPK3PXP".to_string()),
+            alias_provider_id: None,
         };
 
         entry.zeroize();
 
         assert!(entry.password.is_empty());
         assert!(entry.totp_secret.is_none());
+    }
+
+    #[test]
+    fn credential_alias_provider_id_round_trips_and_remains_optional() {
+        let json = r#"{"id":"1","title":"Example","username":"user","password":"secret","url":null,"icon_url":null,"alias_provider_id":"simplelogin"}"#;
+        let credential: Entry = serde_json::from_str(json).unwrap();
+
+        assert_eq!(credential.alias_provider_id.as_deref(), Some("simplelogin"));
+        assert_eq!(
+            serde_json::to_value(&credential).unwrap()["alias_provider_id"],
+            "simplelogin"
+        );
+
+        let legacy = r#"{"id":"2","title":"Legacy","username":"user","password":"secret","url":null,"icon_url":null}"#;
+        assert!(serde_json::from_str::<Entry>(legacy)
+            .unwrap()
+            .alias_provider_id
+            .is_none());
     }
 
     #[test]
