@@ -79,8 +79,8 @@ function AliasSettings() {
 
   return (
     <div>
-      <header className="flex items-baseline justify-between gap-3 flex-wrap pb-2.5 border-b border-theme-border mb-3">
-        <h2 className="font-theme text-2xl font-semibold tracking-wide text-theme-accent">
+      <header className="flex items-baseline justify-between gap-3 flex-wrap pb-2 border-b border-theme-border mb-2">
+        <h2 className="font-theme text-lg font-semibold tracking-wide text-theme-accent">
           Email Alias Integration
         </h2>
       </header>
@@ -136,7 +136,7 @@ function AliasSettings() {
           </ul>
         )}
 
-        <div className="flex flex-col gap-2 mt-2 pt-3 border-t border-theme-border">
+        <div className="flex flex-col gap-2 pt-2 border-t border-theme-border">
           <label className="flex flex-col gap-1 text-[11px] uppercase tracking-wider text-theme-text-secondary">
             Provider type
             <select
@@ -165,7 +165,7 @@ function AliasSettings() {
           <button
             onClick={handleSave}
             disabled={saving}
-            className="self-end px-5 py-2.5 bg-theme-accent text-theme-bg border-2 border-theme-accent font-extrabold font-theme uppercase tracking-wider cursor-pointer transition-transform duration-100 hover:bg-theme-text hover:translate-x-[2px] hover:translate-y-[2px] hover:shadow-theme-sm disabled:opacity-50 disabled:cursor-not-allowed"
+            className="self-end px-5 py-2 bg-theme-accent text-theme-bg border-2 border-theme-accent font-extrabold font-theme uppercase tracking-wider cursor-pointer transition-transform duration-100 hover:bg-theme-text hover:translate-x-[2px] hover:translate-y-[2px] hover:shadow-theme-sm disabled:opacity-50 disabled:cursor-not-allowed"
           >
             {saving ? 'Saving…' : 'Save integration'}
           </button>
