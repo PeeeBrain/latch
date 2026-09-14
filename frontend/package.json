@@ -1,6 +1,6 @@
 {
   "name": "latch-frontend",
-  "version": "0.2.5",
+  "version": "0.2.6",
   "description": "Latch Password Manager Frontend",
   "type": "module",
   "packageManager": "bun@1.4.2",
