@@ -74,12 +74,23 @@ describe('AliasSettings', () => {
     )
   })
 
-  it('deletes a saved integration', async () => {
+  it('deletes a saved integration after confirmation', async () => {
     await renderWith([SIMPLELOGIN])
 
     fireEvent.click(screen.getByRole('button', { name: 'Delete' }))
+    expect(deleteAliasConfig).not.toHaveBeenCalled()
+    fireEvent.click(screen.getByRole('button', { name: 'Confirm' }))
 
     await waitFor(() => expect(deleteAliasConfig).toHaveBeenCalledWith('simplelogin'))
+  })
+
+  it('keeps the integration when deletion is cancelled', async () => {
+    await renderWith([SIMPLELOGIN])
+
+    fireEvent.click(screen.getByRole('button', { name: 'Delete' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }))
+
+    expect(deleteAliasConfig).not.toHaveBeenCalled()
   })
 
   it('sets a provider as the default', async () => {

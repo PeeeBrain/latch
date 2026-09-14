@@ -1,4 +1,4 @@
-import { render, screen, fireEvent, waitFor } from '@testing-library/react'
+import { render, screen, fireEvent, waitFor, act } from '@testing-library/react'
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import AddCredential from '../components/modes/AddCredential'
 
@@ -239,6 +239,44 @@ describe('AddCredential email alias masks', () => {
     expect(await screen.findByText('No default alias provider configured')).toBeTruthy()
     fireEvent.click(screen.getByRole('button', { name: 'Open Settings' }))
     expect(onModeChange).toHaveBeenCalledWith('settings')
+  })
+
+  it('ignores a second generation request while one is pending', async () => {
+    let resolveMask: (value: string) => void = () => {}
+    generateEmailMask.mockImplementation(
+      () =>
+        new Promise<string>((resolve) => {
+          resolveMask = resolve
+        }),
+    )
+    renderForm({ configs: [SIMPLELOGIN, DUCKDUCKGO], defaultProviderId: 'simplelogin' })
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Generate email mask' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'SimpleLogin' }))
+    fireEvent.click(screen.getByRole('button', { name: 'DuckDuckGo' }))
+
+    expect(generateEmailMask).toHaveBeenCalledTimes(1)
+
+    await act(async () => resolveMask('mask@simplelogin.com'))
+    await waitFor(() => expect(usernameInput().value).toBe('mask@simplelogin.com'))
+  })
+
+  it('drops the provider metadata when the username is edited manually', async () => {
+    renderForm({ configs: [SIMPLELOGIN], defaultProviderId: 'simplelogin' })
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Generate email mask' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Default (SimpleLogin)' }))
+    await waitFor(() => expect(usernameInput().value).toBe('mask@simplelogin.com'))
+
+    fireEvent.change(usernameInput(), { target: { value: 'someone@example.com' } })
+    fireEvent.change(screen.getByPlaceholderText('Website title...'), { target: { value: 'Acme' } })
+    fireEvent.change(screen.getByPlaceholderText('Password...'), { target: { value: 'hunter2' } })
+    fireEvent.keyDown(window, { key: 'Enter' })
+
+    await waitFor(() => expect(addEntry).toHaveBeenCalledTimes(1))
+    expect(addEntry).toHaveBeenCalledWith(
+      expect.objectContaining({ aliasProviderId: undefined }),
+    )
   })
 
   it('shows generation errors below the username field', async () => {

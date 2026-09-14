@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react'
 import { api } from '../api/client'
 import { type AliasProvider } from '../api/types'
 import { providerLabel } from '../utils/aliasProviders'
+import ConfirmationModal from './ConfirmationModal'
 
 function errorMessage(err: unknown): string {
   return err instanceof Error ? err.message : String(err)
@@ -16,6 +17,7 @@ function AliasSettings() {
   const [providerId, setProviderId] = useState('simplelogin')
   const [description, setDescription] = useState('')
   const [apiToken, setApiToken] = useState('')
+  const [pendingDelete, setPendingDelete] = useState<string | null>(null)
 
   useEffect(() => {
     load()
@@ -125,7 +127,7 @@ function AliasSettings() {
                     </button>
                   )}
                   <button
-                    onClick={() => handleDelete(config.provider_id)}
+                    onClick={() => setPendingDelete(config.provider_id)}
                     className="text-[11px] uppercase tracking-wider font-bold px-2 py-1 bg-theme-danger text-theme-text border-2 border-theme-accent cursor-pointer"
                   >
                     Delete
@@ -177,6 +179,18 @@ function AliasSettings() {
           </div>
         )}
       </div>
+
+      {pendingDelete && (
+        <ConfirmationModal
+          message={`Delete the ${providerLabel(pendingDelete)} integration? Its stored API token will be removed and cannot be recovered.`}
+          onConfirm={() => {
+            const providerId = pendingDelete
+            setPendingDelete(null)
+            handleDelete(providerId)
+          }}
+          onCancel={() => setPendingDelete(null)}
+        />
+      )}
     </div>
   )
 }

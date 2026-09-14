@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import { Globe, User, Key, ShieldCheck, Mail, ChevronDown } from 'lucide-react'
 import { api } from '../../api/client'
 import { fetchFavicon } from '../../utils/favicon'
@@ -34,6 +34,7 @@ function AddCredential({ editEntry, prefillTitle, generatedPassword, onModeChang
   const [aliasProviderId, setAliasProviderId] = useState<string | null>(null)
   const [aliasError, setAliasError] = useState('')
   const [aliasSetupHint, setAliasSetupHint] = useState(false)
+  const generatingRef = useRef(false)
 
   useEffect(() => {
     if (isEditing && editEntry && !loadedEdit) {
@@ -87,6 +88,8 @@ function AddCredential({ editEntry, prefillTitle, generatedPassword, onModeChang
   }
 
   const generateAlias = useCallback(async (providerId: string) => {
+    if (generatingRef.current) return
+    generatingRef.current = true
     try {
       setGeneratingAlias(true)
       setAliasError('')
@@ -98,6 +101,7 @@ function AddCredential({ editEntry, prefillTitle, generatedPassword, onModeChang
     } catch (err) {
       setAliasError(err instanceof Error ? err.message : String(err))
     } finally {
+      generatingRef.current = false
       setGeneratingAlias(false)
     }
   }, [])
@@ -209,7 +213,10 @@ function AddCredential({ editEntry, prefillTitle, generatedPassword, onModeChang
       <div className="relative">
         <PaletteInput
           value={formData.username}
-          onChange={(val) => setFormData({ ...formData, username: val })}
+          onChange={(val) => {
+            setFormData({ ...formData, username: val })
+            setAliasProviderId(null)
+          }}
           placeholder={isEditing ? 'Edit username or email...' : 'Username or email...'}
           icon={User}
           iconSpin={generatingAlias}
@@ -234,7 +241,8 @@ function AddCredential({ editEntry, prefillTitle, generatedPassword, onModeChang
                       <button
                         type="button"
                         onClick={() => generateAlias(defaultProviderId)}
-                        className="text-left px-3 py-2 text-[13px] font-theme text-theme-text bg-theme-bg cursor-pointer hover:bg-theme-accent hover:text-theme-accent-text border-b border-theme-border"
+                        disabled={generatingAlias}
+                        className="text-left px-3 py-2 text-[13px] font-theme text-theme-text bg-theme-bg cursor-pointer hover:bg-theme-accent hover:text-theme-accent-text border-b border-theme-border disabled:opacity-50 disabled:cursor-not-allowed"
                       >
                         Default ({providerLabel(defaultProviderId)})
                       </button>
@@ -244,7 +252,8 @@ function AddCredential({ editEntry, prefillTitle, generatedPassword, onModeChang
                         key={config.provider_id}
                         type="button"
                         onClick={() => generateAlias(config.provider_id)}
-                        className="text-left px-3 py-2 text-[13px] font-theme text-theme-text bg-theme-bg cursor-pointer hover:bg-theme-accent hover:text-theme-accent-text border-b border-theme-border last:border-b-0"
+                        disabled={generatingAlias}
+                        className="text-left px-3 py-2 text-[13px] font-theme text-theme-text bg-theme-bg cursor-pointer hover:bg-theme-accent hover:text-theme-accent-text border-b border-theme-border last:border-b-0 disabled:opacity-50 disabled:cursor-not-allowed"
                       >
                         {providerLabel(config.provider_id)}
                       </button>
