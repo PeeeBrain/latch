@@ -48,7 +48,7 @@ jobs:
         run: bun -e 'const config = await Bun.file("frontend/src-tauri/tauri.conf.json").json(); const expected = `v${config.version}`; if (process.env.RELEASE_TAG !== expected) { console.error(`Expected tag ${expected}, got ${process.env.RELEASE_TAG}`); process.exit(1); }'
 
       - name: Install Rust stable
-        uses: dtolnay/rust-toolchain@1.98.1
+        uses: dtolnay/rust-toolchain@1.120.0
         with:
           targets: ${{ matrix.platform == 'macos-latest' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
 
