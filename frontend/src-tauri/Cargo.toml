@@ -30,7 +30,7 @@ dirs = "6"
 hex = "0.4"
 uuid = { version = "1.18", features = ["v4"] }
 fuzzy-matcher = "0.3"
-jsonwebtoken = "9"
+jsonwebtoken = "11"
 sha2 = "0.10"
 pbkdf2 = "0.12"
 data-encoding = "2.9"
