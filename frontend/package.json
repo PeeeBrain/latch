@@ -22,7 +22,7 @@
     "@tauri-apps/plugin-dialog": "2.7.3",
     "@tauri-apps/plugin-process": "2.3.1",
     "@tauri-apps/plugin-updater": "2.11.0",
-    "lucide-react": "^1.45.0",
+    "lucide-react": "^1.47.0",
     "react": "^19.3.0",
     "react-dom": "^19.3.0",
     "zod": "^3.25.76"
@@ -37,7 +37,7 @@
     "@vitejs/plugin-react": "^4.7.0",
     "eslint": "^9.39.5",
     "eslint-plugin-react-hooks": "^5.2.0",
-    "eslint-plugin-react-refresh": "^0.4.26",
+    "eslint-plugin-react-refresh": "^0.5.7",
     "globals": "^16.5.0",
     "jsdom": "^26.1.0",
     "tailwindcss": "^4.3.3",
