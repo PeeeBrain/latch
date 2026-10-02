@@ -2,11 +2,27 @@ use super::{storage::VaultStorage, workspace::Workspace, Entry, VaultData};
 use crate::crypto::aead;
 use zeroize::Zeroizing;
 
-pub fn add(workspace: &mut Workspace, storage: &VaultStorage, entry: Entry) -> Result<(), String> {
+pub fn add(
+    workspace: &mut Workspace,
+    storage: &VaultStorage,
+    mut entry: Entry,
+) -> Result<(), String> {
     workspace.check_session()?;
+    validate(&mut entry)?;
+    if workspace
+        .credentials
+        .iter()
+        .any(|stored| stored.id == entry.id)
+    {
+        return Err("Credential already exists".into());
+    }
     workspace.refresh();
     workspace.credentials.push(entry);
-    persist(workspace, storage)
+    if let Err(error) = persist(workspace, storage) {
+        workspace.credentials.pop();
+        return Err(error);
+    }
+    Ok(())
 }
 
 pub fn get_full(workspace: &mut Workspace, id: &str) -> Result<Entry, String> {
@@ -38,19 +54,64 @@ pub fn update(
         Some("") => entry.totp_secret = None,
         Some(_) => {}
     }
-    workspace.credentials[idx] = entry;
-    persist(workspace, storage)
+    validate(&mut entry)?;
+    let previous = std::mem::replace(&mut workspace.credentials[idx], entry);
+    if let Err(error) = persist(workspace, storage) {
+        workspace.credentials[idx] = previous;
+        return Err(error);
+    }
+    Ok(())
 }
 
 pub fn delete(workspace: &mut Workspace, storage: &VaultStorage, id: &str) -> Result<(), String> {
     workspace.check_session()?;
     workspace.refresh();
-    let len_before = workspace.credentials.len();
-    workspace.credentials.retain(|e| e.id != id);
-    if workspace.credentials.len() == len_before {
-        return Err("Credential not found".to_string());
+    let index = workspace
+        .credentials
+        .iter()
+        .position(|entry| entry.id == id)
+        .ok_or("Credential not found")?;
+    let previous = workspace.credentials.remove(index);
+    if let Err(error) = persist(workspace, storage) {
+        workspace.credentials.insert(index, previous);
+        return Err(error);
     }
-    persist(workspace, storage)
+    Ok(())
+}
+
+fn validate(entry: &mut Entry) -> Result<(), String> {
+    for (name, value, limit) in [
+        ("Title", entry.title.as_str(), 256),
+        ("Username", entry.username.as_str(), 256),
+        ("Password", entry.password.as_str(), 1024),
+    ] {
+        if value.trim().is_empty() || value.len() > limit {
+            return Err(format!(
+                "{name} is required and must be at most {limit} bytes"
+            ));
+        }
+    }
+    if entry.id.is_empty() || entry.id.len() > 256 {
+        return Err("Invalid credential ID".into());
+    }
+    if let Some(value) = entry
+        .url
+        .as_deref()
+        .filter(|value| !value.trim().is_empty())
+    {
+        let parsed = url::Url::parse(value).map_err(|_| "Invalid URL")?;
+        if !matches!(parsed.scheme(), "http" | "https") || parsed.host_str().is_none() {
+            return Err("URL must use HTTP or HTTPS".into());
+        }
+    }
+    if let Some(secret) = entry
+        .totp_secret
+        .as_deref()
+        .filter(|value| !value.is_empty())
+    {
+        entry.totp_secret = Some(super::totp::extract_secret(secret)?);
+    }
+    Ok(())
 }
 
 pub fn get_field(workspace: &mut Workspace, id: &str, field: &str) -> Result<String, String> {
@@ -158,9 +219,17 @@ mod tests {
         let mut workspace = unlocked_workspace();
         workspace.credentials[0].totp_secret = Some("OLD".to_string());
 
-        update(&mut workspace, &storage, replacement(Some("NEW"))).unwrap();
+        update(
+            &mut workspace,
+            &storage,
+            replacement(Some("GEZDGNBVGY3TQOJQ")),
+        )
+        .unwrap();
 
-        assert_eq!(workspace.credentials[0].totp_secret.as_deref(), Some("NEW"));
+        assert_eq!(
+            workspace.credentials[0].totp_secret.as_deref(),
+            Some("GEZDGNBVGY3TQOJQ")
+        );
     }
 
     #[test]
@@ -196,5 +265,28 @@ mod tests {
         assert_eq!(result.unwrap_err(), "Session expired");
         assert!(workspace.session_key.is_none());
         assert!(workspace.credentials.is_empty());
+    }
+
+    #[test]
+    fn rejected_or_failed_edits_preserve_memory_and_disk() {
+        let (storage, directory) = test_storage();
+        let original = std::fs::read(&storage.path).unwrap();
+        let mut workspace = unlocked_workspace();
+        let mut invalid = replacement(None);
+        invalid.title.clear();
+        assert!(update(&mut workspace, &storage, invalid).is_err());
+        assert_eq!(workspace.credentials[0].title, "Example");
+        assert_eq!(std::fs::read(&storage.path).unwrap(), original);
+        let inaccessible = VaultStorage {
+            path: directory.path().to_path_buf(),
+        };
+        assert!(update(&mut workspace, &inaccessible, replacement(None)).is_err());
+        assert_eq!(workspace.credentials[0].title, "Example");
+        assert!(delete(&mut workspace, &inaccessible, "entry-1").is_err());
+        assert_eq!(workspace.credentials.len(), 1);
+        let mut extra = replacement(None);
+        extra.id = "entry-2".into();
+        assert!(add(&mut workspace, &inaccessible, extra).is_err());
+        assert_eq!(workspace.credentials.len(), 1);
     }
 }

@@ -18,7 +18,7 @@ impl AuthMethod {
 
     pub fn from_vault_tag(tag: &str) -> Option<Self> {
         match tag {
-            "password-pbkdf2" => Some(AuthMethod::Password),
+            "password-pbkdf2" | "argon2id" => Some(AuthMethod::Password),
             "oauth-argon2id" | "oauth-pbkdf2" => Some(AuthMethod::OAuth),
             "biometric-keychain" => Some(AuthMethod::Biometric),
             _ => None,
@@ -29,6 +29,7 @@ impl AuthMethod {
     pub fn all_tags() -> &'static [&'static str] {
         &[
             "password-pbkdf2",
+            "argon2id",
             "oauth-argon2id",
             "oauth-pbkdf2",
             "biometric-keychain",

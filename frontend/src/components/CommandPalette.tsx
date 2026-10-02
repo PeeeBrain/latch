@@ -10,11 +10,11 @@ import SearchMode from './modes/SearchMode'
 import EntryActions from './modes/EntryActions'
 import AddCredential from './modes/AddCredential'
 import DeleteConfirm from './modes/DeleteConfirm'
-import AuthSelector from './AuthSelector'
+import PasswordAccess from './PasswordAccess'
 import OAuthSignIn from './OAuthSignIn'
 import BiometricSignIn from './BiometricSignIn'
 import MigrateVault from './MigrateVault'
-import Settings from './Settings'
+import Settings from './MigrationSettings'
 import PasswordGenerator from './PasswordGenerator'
 import VaultHealth from './VaultHealth'
 import WeakPasswordsList from './health/WeakPasswordsList'
@@ -45,7 +45,7 @@ function CommandPalette({ initialMode }: CommandPaletteProps) {
       const authMethod = await api.getAuthMethod()
       dispatch({
         type: 'MODE_CHANGE',
-        mode: authMethod === 'biometric-keychain' ? 'biometric-login' : 'oauth-login',
+        mode: authMethod === 'biometric-keychain' ? 'biometric-login' : authMethod.startsWith('oauth-') ? 'oauth-login' : 'password-login',
       })
     } catch (error) {
       console.error('Failed to lock vault:', error)
@@ -142,12 +142,10 @@ function CommandPalette({ initialMode }: CommandPaletteProps) {
         )
 
       case 'auth-selector':
-        return (
-          <AuthSelector
-            onOAuthSelect={() => dispatch({ type: 'MODE_CHANGE', mode: 'oauth-setup' })}
-            onBiometricSelect={() => dispatch({ type: 'MODE_CHANGE', mode: 'biometric-setup' })}
-          />
-        )
+      case 'password-setup':
+        return <PasswordAccess setup onSuccess={handleOAuthSuccess} onError={handleOAuthError} />
+      case 'password-login':
+        return <PasswordAccess onSuccess={handleOAuthSuccess} onError={handleOAuthError} />
 
       case 'oauth-setup':
         return (

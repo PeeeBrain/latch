@@ -18,7 +18,7 @@ pub fn search(workspace: &mut Workspace, query: &str) -> Result<Vec<EntryPreview
             let t = matcher.fuzzy_match(&entry.title, query).unwrap_or(0);
             let u = matcher.fuzzy_match(&entry.username, query).unwrap_or(0);
             let best = t.max(u);
-            if best >= 50 {
+            if best > 0 {
                 Some((best, entry.into()))
             } else {
                 None
@@ -66,6 +66,7 @@ mod tests {
         let json = serde_json::to_string(&results[0]).unwrap();
         assert!(!json.contains("GEZDGNBVGY3TQOJQ"));
         assert!(!json.contains("totp_secret"));
+        assert_eq!(search(&mut workspace, "E").unwrap().len(), 1);
     }
 
     #[test]

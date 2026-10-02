@@ -44,6 +44,10 @@ export const api = {
     parse(result, ResponseSchema)
   },
 
+  async migrateToPassword(password: string, confirmation: string): Promise<void> {
+    parse(await invoke('reencrypt_vault_to_password', { password, confirmation }), ResponseSchema)
+  },
+
   async accessOAuth(idToken: string): Promise<void> {
     const result = await invoke('unlock_vault_oauth', { idToken })
     parse(result, ResponseSchema)

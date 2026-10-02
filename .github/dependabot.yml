@@ -19,7 +19,7 @@ updates:
           - "version-update:semver-major"
 
   - package-ecosystem: "cargo"
-    directory: "/frontend/src-tauri"
+    directory: "/"
     schedule:
       interval: "weekly"
     open-pull-requests-limit: 2

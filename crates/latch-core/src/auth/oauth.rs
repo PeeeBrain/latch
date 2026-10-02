@@ -45,6 +45,24 @@ pub fn derive_key(user_id: &str) -> Result<[u8; 32], String> {
     Ok(key)
 }
 
+/// Compatibility with the writer at 25f09de; confined to the migration bridge.
+pub fn derive_historical_key(user_id: &str) -> Result<[u8; 32], String> {
+    let secret = zeroize::Zeroizing::new(
+        env::var("LATCH_OAUTH_SECRET").unwrap_or_else(|_| "latch-dev-secret-32bytes-long!!".into()),
+    );
+    if secret.len() < 16 {
+        return Err("Original OAuth secret is too short".into());
+    }
+    let mut key = [0; 32];
+    pbkdf2::pbkdf2_hmac::<sha2::Sha256>(
+        secret.as_bytes(),
+        format!("latch-vault-oauth-{user_id}").as_bytes(),
+        100_000,
+        &mut key,
+    );
+    Ok(key)
+}
+
 pub fn decode_id_token(id_token: &str) -> Result<GoogleIdToken, String> {
     // Validate critical claims for security
     // Note: Signature validation requires fetching Google's public keys (JWKs)

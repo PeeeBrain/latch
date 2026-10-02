@@ -28,6 +28,9 @@ pub fn decrypt(key: &[u8; 32], data: &EncryptedData) -> Result<String, String> {
     let cipher = Aes256Gcm::new(key.into());
     let nonce_bytes =
         hex::decode(&data.nonce).map_err(|e| format!("Invalid nonce encoding: {}", e))?;
+    if nonce_bytes.len() != 12 {
+        return Err("Invalid vault nonce length".into());
+    }
     let ciphertext =
         hex::decode(&data.ciphertext).map_err(|e| format!("Invalid ciphertext encoding: {}", e))?;
 
@@ -66,6 +69,8 @@ mod tests {
         let key = [1u8; 32];
         let mut encrypted = encrypt(&key, "secret").unwrap();
         encrypted.ciphertext = "deadbeef".to_string();
+        assert!(decrypt(&key, &encrypted).is_err());
+        encrypted.nonce = "00".into();
         assert!(decrypt(&key, &encrypted).is_err());
     }
 }

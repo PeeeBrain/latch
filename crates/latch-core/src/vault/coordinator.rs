@@ -1,5 +1,3 @@
-use std::time::SystemTime;
-
 use crate::auth::authenticator::{AuthCredential, Authenticator};
 use crate::auth::lockout::LockoutTracker;
 
@@ -9,14 +7,14 @@ pub struct VaultCoordinator {
     storage: VaultStorage,
     workspace: Workspace,
     lockout: LockoutTracker,
-    schedule_session_expiry: Box<dyn Fn(SystemTime) + Send + Sync>,
+    schedule_session_expiry: Box<dyn Fn(u64) + Send + Sync>,
 }
 
 impl VaultCoordinator {
     pub fn new(
         storage: VaultStorage,
         workspace: Workspace,
-        schedule_session_expiry: Box<dyn Fn(SystemTime) + Send + Sync>,
+        schedule_session_expiry: Box<dyn Fn(u64) + Send + Sync>,
     ) -> Self {
         Self {
             storage,
@@ -31,7 +29,7 @@ impl VaultCoordinator {
         storage: VaultStorage,
         workspace: Workspace,
         lockout: LockoutTracker,
-        schedule_session_expiry: Box<dyn Fn(SystemTime) + Send + Sync>,
+        schedule_session_expiry: Box<dyn Fn(u64) + Send + Sync>,
     ) -> Self {
         Self {
             storage,
@@ -47,14 +45,16 @@ impl VaultCoordinator {
         }
 
         let vault = self.storage.read()?;
-        let key = Authenticator::derive_key(credential, &vault.kdf, &vault.salt)
-            .map_err(|error| self.record_failed_access(error.to_string()))?;
+        let key = zeroize::Zeroizing::new(
+            Authenticator::derive_key(credential, &vault.kdf, &vault.salt)
+                .map_err(|error| self.record_failed_access(error.to_string()))?,
+        );
 
         match super::access::access(&self.storage, &mut self.workspace, &key) {
             Ok(()) => {
                 self.lockout.reset();
-                if let Some(session_start) = self.workspace.session_start {
-                    (self.schedule_session_expiry)(session_start);
+                if let Some(generation) = self.workspace.session_id() {
+                    (self.schedule_session_expiry)(generation);
                 }
                 Ok(())
             }
@@ -66,7 +66,14 @@ impl VaultCoordinator {
     where
         F: FnOnce(&VaultStorage, &mut Workspace) -> Result<T, String>,
     {
-        operation(&self.storage, &mut self.workspace)
+        let previous_session = self.workspace.session_id();
+        let result = operation(&self.storage, &mut self.workspace);
+        if let Some(generation) = self.workspace.session_id() {
+            if Some(generation) != previous_session {
+                (self.schedule_session_expiry)(generation);
+            }
+        }
+        result
     }
 
     fn record_failed_access(&mut self, error: String) -> String {
@@ -155,6 +162,35 @@ mod tests {
         assert!(coordinator
             .with_vault(|_, workspace| Ok(workspace.is_unlocked()))
             .unwrap());
+    }
+
+    #[test]
+    fn provisioning_schedules_expiry_without_a_later_unlock() {
+        let directory = tempfile::tempdir().unwrap();
+        let storage = VaultStorage {
+            path: directory.path().join("vault.enc"),
+        };
+        let scheduled = Arc::new(AtomicBool::new(false));
+        let callback_flag = Arc::clone(&scheduled);
+        let mut coordinator = VaultCoordinator::new(
+            storage,
+            Workspace::new(),
+            Box::new(move |_| callback_flag.store(true, Ordering::SeqCst)),
+        );
+
+        coordinator
+            .with_vault(|storage, workspace| {
+                crate::vault::provision::provision(
+                    storage,
+                    workspace,
+                    &[7; 32],
+                    AuthMethod::Biometric,
+                    "",
+                )
+            })
+            .unwrap();
+
+        assert!(scheduled.load(Ordering::SeqCst));
     }
 
     #[test]

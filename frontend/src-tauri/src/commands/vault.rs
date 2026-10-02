@@ -96,16 +96,28 @@ pub async fn unlock_vault(
 }
 
 #[tauri::command]
+pub async fn reencrypt_vault_to_password(
+    password: String,
+    confirmation: String,
+    state: State<'_, VaultState>,
+) -> Result<String, String> {
+    let password = zeroize::Zeroizing::new(password);
+    let confirmation = zeroize::Zeroizing::new(confirmation);
+    if password.as_str() != confirmation.as_str() {
+        return Err("Master passwords do not match".into());
+    }
+    state
+        .lock(|storage, workspace| crate::vault::rotate::password(storage, workspace, &password))?;
+    Ok(json!({"status":"success"}).to_string())
+}
+
+#[tauri::command]
 pub async fn get_vault_auth_method(state: State<'_, VaultState>) -> Result<String, String> {
     state.lock(|storage, _| {
-        let method = if storage.exists() {
-            storage
-                .read()
-                .map(|v| v.kdf)
-                .unwrap_or_else(|_| "none".to_string())
-        } else {
-            "none".to_string()
-        };
+        let method = storage
+            .inspect()?
+            .map(|vault| vault.kdf)
+            .unwrap_or_else(|| "none".into());
 
         Ok(json!({
             "status": "success",

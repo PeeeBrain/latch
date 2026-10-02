@@ -8,6 +8,8 @@ type InitialMode =
   | 'auth-selector'
   | 'oauth-setup'
   | 'oauth-login'
+  | 'password-setup'
+  | 'password-login'
   | 'biometric-setup'
   | 'biometric-login'
   | 'search'
@@ -66,7 +68,7 @@ function App() {
     : !isUnlocked
       ? authMethod === 'biometric-keychain'
         ? 'biometric-login'
-        : 'oauth-login'
+        : authMethod.startsWith('oauth-') ? 'oauth-login' : 'password-login'
       : 'search'
 
   return (

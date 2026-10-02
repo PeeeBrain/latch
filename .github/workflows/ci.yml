@@ -5,11 +5,19 @@ on:
     branches: [main]
     paths:
       - 'frontend/**'
+      - 'crates/**'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - 'rust-toolchain.toml'
       - '.github/workflows/ci.yml'
   pull_request:
     branches: [main]
     paths:
       - 'frontend/**'
+      - 'crates/**'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - 'rust-toolchain.toml'
       - '.github/workflows/ci.yml'
 
 concurrency:
@@ -74,11 +82,11 @@ jobs:
       - name: Rust cache
         uses: swatinem/rust-cache@v2
         with:
-          workspaces: 'frontend/src-tauri -> target'
+          workspaces: '. -> target'
 
       - name: Check code formatting
         working-directory: ./frontend/src-tauri
-        run: cargo fmt --all -- --check
+        run: cargo fmt -p latch -- --check
 
       - name: Run cargo check, test, and clippy
         working-directory: ./frontend/src-tauri
@@ -88,5 +96,50 @@ jobs:
           cargo check --all-targets --locked
           cargo test --all-targets --locked
           cargo clippy --all-targets --all-features --locked -- -D warnings
+          cargo test -p latch-core --features legacy-oauth --locked
+          cargo clippy -p latch-core --all-targets --all-features --locked -- -D warnings
         # NOTE: CI_LATCH_OAUTH_SECRET must be set as a GitHub Secret with >= 32 random bytes
         # Generate with: openssl rand -hex 32
+
+  native:
+    name: Native Rust (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-latest, macos-15-intel, ubuntu-24.04]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@1.98.1
+        with:
+          components: rustfmt, clippy
+      - name: Linux GPUI dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang cmake pkg-config libasound2-dev libfontconfig1-dev libfreetype-dev libssl-dev libwayland-dev libxkbcommon-dev libxkbcommon-x11-dev libxcb1-dev libxcb-shape0-dev libxcb-xfixes0-dev libxcb-randr0-dev libx11-xcb-dev libgtk-3-dev libayatana-appindicator3-dev
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: '. -> target'
+          shared-key: native-release
+      - name: Check formatting
+        run: cargo fmt -p latch-core -p latch-desktop -- --check
+      - name: Check native application
+        run: cargo check -p latch-desktop --all-targets --locked
+      - name: Core tests without legacy OAuth
+        run: cargo test -p latch-core --locked
+      - name: Native flow tests
+        run: cargo test -p latch-desktop --locked
+      - name: Strict Clippy
+        run: cargo clippy -p latch-core -p latch-desktop --all-targets --locked -- -D warnings
+      - name: Build review executable on CI
+        run: cargo build -p latch-desktop --release --locked
+      - name: Upload review executable
+        uses: actions/upload-artifact@v4
+        with:
+          name: gpui-preview-${{ runner.os }}-${{ runner.arch }}
+          path: |
+            target/release/latch-desktop
+            target/release/latch-desktop.exe
+          if-no-files-found: error
+          retention-days: 14

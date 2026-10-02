@@ -3,6 +3,7 @@
 This file provides guidelines for AI agents working on Latch Password Manager codebase.
 
 **Available jobs:**
+- `native`: GPUI compile checks and core tests on Windows, macOS, and Linux
 - `frontend`: TypeScript typecheck, ESLint, and Vite build
 - `backend`: Rust fmt check, compile check, tests, and clippy
 - `cargo-audit`: Security vulnerability scan (runs automatically in full workflow)
@@ -54,6 +55,17 @@ bun run test
 **Rule of Thumb**: If any command above fails locally, the CI will fail. Fix it before pushing.
 
 ## Code Style Guidelines
+
+### GPUI transition
+
+- Shared Rust code lives in `crates/latch-core`; the GPUI host lives in `crates/latch-desktop`.
+- The root Cargo workspace owns `Cargo.lock`, the toolchain, and `target/`.
+- Preserve the compact keyboard-first Raycast-style interaction model while redesigning flows.
+- Google OAuth is retired in the native app. Only the temporary Tauri migration host enables `latch-core/legacy-oauth`.
+- Native appearance uses existing VS Code/Zed settings keys, with no preset theme gallery or public Latch theme schema.
+- Check native code with `cargo check -p latch-desktop --all-targets --locked`; run core tests with and without `--features legacy-oauth`.
+- Do not use `--workspace --all-features` to verify OAuth removal: it enables the migration host's legacy feature. Verify the native dependency graph separately.
+- The no-build policy below still applies. Use CI artifacts for native launch/package checks.
 
 ### Architecture Principles
 

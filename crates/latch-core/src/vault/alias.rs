@@ -4,6 +4,7 @@ use crate::vault::AliasConfig;
 use std::future::Future;
 use std::pin::Pin;
 use std::time::Duration;
+use zeroize::Zeroize;
 
 const SIMPLELOGIN_BASE_URL: &str = "https://app.simplelogin.io";
 const DUCKDUCKGO_BASE_URL: &str = "https://quack.duckduckgo.com";
@@ -99,7 +100,7 @@ pub fn save_config(
     workspace.check_session()?;
     workspace.refresh();
     Provider::from_id(provider_id)?;
-    if api_token.trim().is_empty() {
+    if api_token.trim().is_empty() || api_token.len() > 4096 {
         return Err("Alias API token is required".to_string());
     }
 
@@ -108,12 +109,14 @@ pub fn save_config(
         .filter(|value| !value.is_empty())
         .map(str::to_string);
 
+    let previous = workspace.alias_configs.clone();
     match workspace
         .alias_configs
         .iter_mut()
         .find(|config| config.provider_id == provider_id)
     {
         Some(config) => {
+            config.api_token.zeroize();
             config.api_token = api_token.to_string();
             config.description = description;
         }
@@ -124,7 +127,11 @@ pub fn save_config(
         }),
     }
 
-    crate::vault::entries::persist(workspace, storage)
+    if let Err(error) = crate::vault::entries::persist(workspace, storage) {
+        workspace.alias_configs = previous;
+        return Err(error);
+    }
+    Ok(())
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
@@ -154,6 +161,8 @@ pub fn delete_config(
 ) -> Result<(), String> {
     workspace.check_session()?;
     workspace.refresh();
+    let previous = workspace.alias_configs.clone();
+    let previous_default = workspace.default_provider_id.clone();
     let len_before = workspace.alias_configs.len();
     workspace
         .alias_configs
@@ -164,7 +173,12 @@ pub fn delete_config(
     if workspace.default_provider_id.as_deref() == Some(provider_id) {
         workspace.default_provider_id = None;
     }
-    crate::vault::entries::persist(workspace, storage)
+    if let Err(error) = crate::vault::entries::persist(workspace, storage) {
+        workspace.alias_configs = previous;
+        workspace.default_provider_id = previous_default;
+        return Err(error);
+    }
+    Ok(())
 }
 
 pub fn set_default_config(
@@ -181,8 +195,14 @@ pub fn set_default_config(
     {
         return Err(format!("Alias provider '{provider_id}' is not configured"));
     }
-    workspace.default_provider_id = Some(provider_id.to_string());
-    crate::vault::entries::persist(workspace, storage)
+    let previous = workspace
+        .default_provider_id
+        .replace(provider_id.to_string());
+    if let Err(error) = crate::vault::entries::persist(workspace, storage) {
+        workspace.default_provider_id = previous;
+        return Err(error);
+    }
+    Ok(())
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
