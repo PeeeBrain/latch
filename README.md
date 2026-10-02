@@ -63,6 +63,8 @@ For a user-run native development launch, run `cargo run -p latch-desktop` from 
 
 PR CI also uploads `gpui-preview-<OS>-<architecture>` artifacts containing the new release-mode executable. Download the artifact matching your platform from its completed CI run, extract it, and launch `latch-desktop.exe` on Windows or `latch-desktop` on macOS/Linux. These previews use the existing vault location and are not signed installers. Windows debug binaries refer to shader files in the machine's Cargo registry and must be launched on their build machine; portable previews therefore use release mode, which embeds the shaders.
 
+On macOS/Linux, restore the artifact's executable permission with `chmod +x latch-desktop` before launching. Linux closes by quitting; tray creation alone cannot establish that a desktop exposes the icon. Windows/macOS close to the tray with a locked vault when tray initialization succeeds.
+
 Agents must follow the repository's no-local-build policy and use check/test commands. A user-run launch and CI-produced packages supply the native runtime checks.
 
 The migration frontend uses `frontend` and `bun run tauri dev`. Existing Google vaults must unlock there and use Settings → Switch to master password before opening native Latch.

@@ -137,6 +137,11 @@ pub fn start(window: AnyWindowHandle, view: Entity<crate::app::Latch>, cx: &mut 
 }
 
 pub fn has_tray(cx: &App) -> bool {
+    // ponytail: Linux tray creation does not prove a visible desktop host. Quit
+    // on close until StatusNotifier host presence and loss are tracked reliably.
+    if cfg!(target_os = "linux") {
+        return false;
+    }
     cx.try_global::<Integration>()
         .is_some_and(|integration| integration.tray_available.load(Ordering::SeqCst))
 }
