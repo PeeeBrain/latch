@@ -132,13 +132,13 @@ jobs:
       - name: Strict Clippy
         run: cargo clippy -p latch-core -p latch-desktop --all-targets --locked -- -D warnings
       - name: Build review executable on CI
-        run: cargo build -p latch-desktop --locked
+        run: cargo build -p latch-desktop --release --locked
       - name: Upload review executable
         uses: actions/upload-artifact@v4
         with:
           name: gpui-preview-${{ runner.os }}-${{ runner.arch }}
           path: |
-            target/debug/latch-desktop
-            target/debug/latch-desktop.exe
+            target/release/latch-desktop
+            target/release/latch-desktop.exe
           if-no-files-found: error
           retention-days: 14
