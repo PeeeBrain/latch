@@ -17,7 +17,6 @@ pub struct WeakPassword {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ReusedPassword {
-    pub password: String,
     pub entries: Vec<ReusedEntry>,
     pub count: usize,
 }
@@ -46,6 +45,7 @@ pub struct VaultHealthReport {
     pub total_entries: usize,
     pub strong_passwords: usize,
     pub average_entropy: f64,
+    pub breach_unavailable: Vec<String>,
 }
 
 pub fn check_weak_passwords(entries: &[Entry]) -> Vec<WeakPassword> {
@@ -75,11 +75,11 @@ pub fn check_weak_passwords(entries: &[Entry]) -> Vec<WeakPassword> {
 }
 
 pub fn check_reused_passwords(entries: &[Entry]) -> Vec<ReusedPassword> {
-    let mut password_map: HashMap<String, Vec<ReusedEntry>> = HashMap::new();
+    let mut password_map: HashMap<&str, Vec<ReusedEntry>> = HashMap::new();
 
     for entry in entries {
         password_map
-            .entry(entry.password.clone())
+            .entry(&entry.password)
             .or_default()
             .push(ReusedEntry {
                 entry_id: entry.id.clone(),
@@ -90,11 +90,10 @@ pub fn check_reused_passwords(entries: &[Entry]) -> Vec<ReusedPassword> {
 
     let mut reused_passwords = Vec::new();
 
-    for (password, entries_list) in password_map {
+    for (_, entries_list) in password_map {
         let count = entries_list.len();
         if count > 1 {
             reused_passwords.push(ReusedPassword {
-                password: password.clone(),
                 entries: entries_list,
                 count,
             });
@@ -108,24 +107,27 @@ pub fn check_reused_passwords(entries: &[Entry]) -> Vec<ReusedPassword> {
 pub async fn check_breach_status(
     entries: &[Entry],
     checker: &dyn BreachChecker,
-) -> Vec<BreachedCredential> {
+) -> (Vec<BreachedCredential>, Vec<String>) {
     let mut breached_credentials = Vec::new();
+    let mut unavailable = Vec::new();
 
     for entry in entries {
-        if let Some(breach_data) = checker.check(&entry.password).await {
-            if breach_data.count > 0 {
+        match checker.check(&entry.password).await {
+            Ok(Some(breach_data)) if breach_data.count > 0 => {
                 breached_credentials.push(BreachedCredential {
                     entry_id: entry.id.clone(),
                     title: entry.title.clone(),
                     username: entry.username.clone(),
                     breach_count: breach_data.count,
-                });
+                })
             }
+            Ok(_) => {}
+            Err(_) => unavailable.push(entry.id.clone()),
         }
     }
 
     breached_credentials.sort_by_key(|entry| Reverse(entry.breach_count));
-    breached_credentials
+    (breached_credentials, unavailable)
 }
 
 pub fn calculate_vault_health_score(
@@ -157,7 +159,7 @@ pub async fn check_vault_health(
 ) -> VaultHealthReport {
     let weak_passwords = check_weak_passwords(entries);
     let reused_passwords = check_reused_passwords(entries);
-    let breached_credentials = check_breach_status(entries, checker).await;
+    let (breached_credentials, breach_unavailable) = check_breach_status(entries, checker).await;
 
     let reused_entries_count: usize = reused_passwords.iter().map(|rp| rp.entries.len() - 1).sum();
 
@@ -189,6 +191,7 @@ pub async fn check_vault_health(
         total_entries: entries.len(),
         strong_passwords,
         average_entropy,
+        breach_unavailable,
     }
 }
 
@@ -237,6 +240,9 @@ mod tests {
         assert_eq!(reused_passwords.len(), 1);
         assert_eq!(reused_passwords[0].count, 2);
         assert_eq!(reused_passwords[0].entries.len(), 2);
+        assert!(!serde_json::to_string(&reused_passwords)
+            .unwrap()
+            .contains("samepass"));
     }
 
     #[test]
@@ -285,7 +291,8 @@ mod tests {
             totp_secret: None,
             alias_provider_id: None,
         }];
-        let breached = check_breach_status(&entries, &checker).await;
+        let (breached, unavailable) = check_breach_status(&entries, &checker).await;
+        assert!(unavailable.is_empty());
         assert_eq!(breached.len(), 1);
         assert_eq!(breached[0].breach_count, 42000);
     }
@@ -303,7 +310,8 @@ mod tests {
             totp_secret: None,
             alias_provider_id: None,
         }];
-        let breached = check_breach_status(&entries, &checker).await;
+        let (breached, unavailable) = check_breach_status(&entries, &checker).await;
+        assert!(unavailable.is_empty());
         assert_eq!(breached.len(), 0);
     }
 }

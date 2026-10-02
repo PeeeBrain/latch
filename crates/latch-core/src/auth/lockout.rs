@@ -10,6 +10,12 @@ pub struct LockoutTracker {
     now: Box<dyn Fn() -> Instant + Send + Sync>,
 }
 
+impl Default for LockoutTracker {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl LockoutTracker {
     pub fn new() -> Self {
         Self {

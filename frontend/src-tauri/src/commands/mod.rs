@@ -20,8 +20,8 @@ impl VaultState {
             Mutex::new(VaultCoordinator::new(
                 storage,
                 workspace,
-                Box::new(move |session_start| {
-                    crate::spawn_session_timer(app_handle.clone(), weak.clone(), session_start);
+                Box::new(move |generation| {
+                    crate::spawn_session_timer(app_handle.clone(), weak.clone(), generation);
                 }),
             ))
         });

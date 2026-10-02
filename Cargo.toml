@@ -1,0 +1,4 @@
+[workspace]
+members = ["crates/latch-core", "crates/latch-desktop", "frontend/src-tauri"]
+default-members = ["crates/latch-core", "crates/latch-desktop"]
+resolver = "2"

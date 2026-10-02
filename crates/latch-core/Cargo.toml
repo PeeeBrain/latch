@@ -1,0 +1,36 @@
+[package]
+name = "latch-core"
+version = "0.2.6"
+edition = "2021"
+license = "MIT"
+publish = false
+
+[features]
+# Only the old Tauri host enables this while existing vaults are migrated.
+legacy-oauth = ["dep:jsonwebtoken"]
+
+[dependencies]
+aes-gcm = "0.10"
+argon2 = "0.5"
+data-encoding = "2.9"
+dirs = "6"
+fuzzy-matcher = "0.3"
+hex = "0.4"
+jsonwebtoken = { version = "9", optional = true }
+pbkdf2 = "0.12"
+rand = "0.8"
+reqwest = { version = "0.12", features = ["rustls-tls"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+sha1 = "0.10.6"
+sha2 = "0.10"
+tokio = { version = "1", features = ["macros", "rt", "sync", "time"] }
+totp-lite = "2.0"
+url = "2.5"
+zeroize = { version = "1.7", features = ["derive"] }
+zxcvbn = "3.1.0"
+tempfile = "3"
+
+[dev-dependencies]
+base64 = "0.22"
+tempfile = "3"

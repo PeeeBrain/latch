@@ -126,6 +126,8 @@ export type PaletteMode =
   | 'auth-selector'
   | 'oauth-setup'
   | 'oauth-login'
+  | 'password-setup'
+  | 'password-login'
   | 'biometric-setup'
   | 'biometric-login'
   | 'migrate'

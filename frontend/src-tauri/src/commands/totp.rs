@@ -17,7 +17,6 @@ fn token_for_entry(
     timestamp: u64,
 ) -> Result<TotpToken, String> {
     workspace.check_session()?;
-    workspace.refresh();
     let secret = workspace
         .credentials
         .iter()

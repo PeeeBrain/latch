@@ -14,26 +14,26 @@ A desktop password manager with a Raycast-style command palette UI. Credentials 
 
 ## Brand Personality
 
-Secure. Focused. Uncompromising. No playful gimmicks — the tool handles sensitive data and should look the part. Personality lives in the Win98 theme as an optional nostalgic nod, but the core experience is professional and calm.
+Secure, focused, and calm. The compact command window keeps credentials and actions close to the keyboard. Users control appearance through explicit colors in existing VS Code or Zed settings.json files.
 
 ## Anti-references
 
-- Whimsical, cartoonish, or playful themes (the current Brutalist/Terminal/Editorial themes)
+- Bundled theme galleries and decorative presets
 - SaaS-dashboard clichés (navy + gold, gradient heroes, big metric cards)
 - Cyberpunk neon aesthetics for a security tool
 - Low-contrast "designery" text that sacrifices legibility
 
 ## Design Principles
 
-1. **Security is serious** — The UI should feel like a professional tool, not a toy. Themes should earn their place.
+1. **Security is visible** — Locked, working, invalid, and unavailable states are explicit. Secrets appear only through deliberate reveal, copy, or edit.
 2. **Speed of access** — Users open this to get a password quickly. Every visual decision should reduce friction, not add it.
-3. **Clarity in all modes** — Whether dark, light, retro, or high-contrast, information hierarchy must be instant and unambiguous.
-4. **Theme as utility, not decoration** — Each theme serves a real use case (night use, day use, accessibility, nostalgia).
-5. **Maintainable theming** — Adding a new theme should be possible by editing CSS variables and a single config file, not refactoring components.
+3. **Compact throughout** — Setup, search, editing, settings, and health stay in one keyboard-first command window.
+4. **Readable appearance** — Light/dark fallbacks, focus indicators, severity labels, contrast feedback, and a keyboard reset remain available.
+5. **Existing settings schemas** — Support selected VS Code/Zed color keys with documented component mappings; no public Latch theme schema or preset picker.
 
 ## Accessibility & Inclusion
 
-- WCAG AA minimum, with an AAA high-contrast theme available
+- Target WCAG AA for fallback palettes; warn about low-contrast imported colors and provide a reset action
 - Support for reduced motion
 - Color-blind safe indicators (icons + color, never color alone)
 - Keyboard-navigable command palette interface

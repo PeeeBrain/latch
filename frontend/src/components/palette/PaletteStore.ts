@@ -22,6 +22,8 @@ export type PaletteView =
   | { mode: 'auth-selector' }
   | { mode: 'oauth-setup' }
   | { mode: 'oauth-login' }
+  | { mode: 'password-setup' }
+  | { mode: 'password-login' }
   | { mode: 'biometric-setup' }
   | { mode: 'biometric-login' }
   | { mode: 'migrate' }
@@ -73,6 +75,10 @@ function viewForMode(
       return { mode: 'oauth-setup' }
     case 'oauth-login':
       return { mode: 'oauth-login' }
+    case 'password-setup':
+      return { mode: 'password-setup' }
+    case 'password-login':
+      return { mode: 'password-login' }
     case 'biometric-setup':
       return { mode: 'biometric-setup' }
     case 'biometric-login':

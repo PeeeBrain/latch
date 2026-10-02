@@ -55,7 +55,7 @@ jobs:
       - name: Rust cache
         uses: swatinem/rust-cache@v2
         with:
-          workspaces: 'frontend/src-tauri -> target'
+          workspaces: '. -> target'
 
       - name: Install frontend dependencies
         working-directory: frontend
@@ -85,8 +85,8 @@ jobs:
         shell: bash
         run: |
           # Find and upload the updater JSON files
-          if [ -d "frontend/src-tauri/target/updater" ]; then
-            for platform_json in frontend/src-tauri/target/updater/*.json; do
+          if [ -d "target/updater" ]; then
+            for platform_json in target/updater/*.json; do
               if [ -f "$platform_json" ]; then
                 platform_name=$(basename "$platform_json" .json)
                 gh release upload "${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}" "$platform_json" --repo ${{ github.repository }}

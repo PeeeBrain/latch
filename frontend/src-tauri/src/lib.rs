@@ -1,41 +1,43 @@
-mod auth;
 mod commands;
-mod crypto;
-mod password_generator;
-mod vault;
-mod vault_health;
+use latch_core::{auth, password_generator, vault, vault_health};
 
-use std::time::SystemTime;
+use std::time::{Duration, SystemTime};
 use tauri::menu::{MenuBuilder, MenuItem};
 use tauri::tray::TrayIconBuilder;
 use tauri::{AppHandle, Emitter, Manager};
 use tauri_plugin_global_shortcut::ShortcutState;
-use vault::SESSION_TIMEOUT_SECS;
 
 pub fn spawn_session_timer(
     app_handle: AppHandle,
     state: std::sync::Weak<std::sync::Mutex<vault::coordinator::VaultCoordinator>>,
-    session_start: SystemTime,
+    generation: u64,
 ) {
     tauri::async_runtime::spawn(async move {
-        tokio::time::sleep(std::time::Duration::from_secs(SESSION_TIMEOUT_SECS)).await;
-        let Some(state) = state.upgrade() else {
-            return;
-        };
-        if let Ok(mut coordinator) = state.lock() {
-            let expired = coordinator
-                .with_vault(|_, workspace| {
-                    if workspace.session_start == Some(session_start) {
-                        workspace.lock();
-                        return Ok(true);
-                    }
-                    Ok(false)
-                })
-                .unwrap_or(false);
-            if expired {
+        loop {
+            let remaining = {
+                let Some(state) = state.upgrade() else {
+                    return;
+                };
+                let Ok(mut coordinator) = state.lock() else {
+                    return;
+                };
+                coordinator
+                    .with_vault(|_, workspace| {
+                        Ok(workspace.expire_session(generation, SystemTime::now()))
+                    })
+                    .ok()
+                    .flatten()
+            };
+            let Some(remaining) = remaining else {
+                return;
+            };
+            if remaining.is_zero() {
                 let _ = app_handle.emit("vault-locked", ());
+                return;
             }
-        };
+            // Recheck the wall clock after resume or a clock change, even during idle.
+            tokio::time::sleep(remaining.min(Duration::from_secs(30))).await;
+        }
     });
 }
 
@@ -98,6 +100,11 @@ pub fn run() {
 
             let storage =
                 vault::storage::VaultStorage::new().expect("Failed to initialize vault storage");
+            app.manage(
+                storage
+                    .acquire_process_lock()
+                    .map_err(std::io::Error::other)?,
+            );
             let workspace = vault::workspace::Workspace::new();
             app.manage(commands::VaultState::new(
                 storage,
@@ -149,6 +156,7 @@ pub fn run() {
             commands::vault::unlock_vault_oauth,
             commands::vault::unlock_vault_with_key,
             commands::vault::unlock_vault,
+            commands::vault::reencrypt_vault_to_password,
             commands::vault::get_vault_auth_method,
             commands::vault::reencrypt_vault,
             commands::vault::reencrypt_vault_to_oauth,

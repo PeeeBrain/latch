@@ -3,27 +3,11 @@ use serde_json::json;
 use tauri::State;
 
 fn session_remaining_seconds(workspace: &mut crate::vault::workspace::Workspace) -> u64 {
-    if !workspace.is_unlocked() {
-        return 0;
-    }
-
-    let Some(start) = workspace.session_start else {
-        workspace.lock();
-        return 0;
-    };
-
-    let Ok(elapsed) = start.elapsed() else {
-        workspace.lock();
-        return 0;
-    };
-
-    let elapsed_secs = elapsed.as_secs();
-    if elapsed_secs >= crate::vault::SESSION_TIMEOUT_SECS {
-        workspace.lock();
-        return 0;
-    }
-
-    crate::vault::SESSION_TIMEOUT_SECS - elapsed_secs
+    workspace
+        .session_id()
+        .and_then(|generation| workspace.expire_session(generation, std::time::SystemTime::now()))
+        .unwrap_or_default()
+        .as_secs()
 }
 
 #[tauri::command]

@@ -1,8 +1,16 @@
 # Latch Password Manager
 
-A secure cross-platform password manager with a Raycast-style command palette UI, built with Tauri v2 and Rust.
+A local password manager with a compact Raycast-style interface, being rebuilt in Rust and GPUI for Windows, macOS, and Linux.
 
-## Architecture
+The GPUI rebuild is in progress. `crates/latch-core` now contains the shared vault logic;
+`crates/latch-desktop` implements the native application. The temporary Tauri host keeps legacy
+Google access for migration, while the native dependency graph excludes it. The native
+application supports password setup/unlock, credential search/add/edit/delete, timed reveal,
+copy, TOTP, password generation, email aliases, health checks, auth rotation, and editor-settings
+color import. Tray, global shortcut, and signed updater integration are implemented; actual
+platform, signing, installer, and upgrade acceptance remain open. See [the implementation plan](docs/plans/gpui-rebuild.md).
+
+## Temporary migration-host architecture
 
 ```mermaid
 graph TD
@@ -31,7 +39,7 @@ graph TD
 
 ## Features
 
-- **Three Auth Methods**: Master Password (PBKDF2), Google OAuth (Argon2id), or Biometric (OS keychain)
+- **Native access**: Master password; Windows Hello/macOS Keychain device keys on supported devices. Google access exists only in the temporary migration host.
 - **Command Palette UI**: Raycast-style single-window interface with keyboard navigation
 - **Password Generator**: Configurable passwords with zxcvbn strength analysis
 - **Vault Health Dashboard**: Detects weak, reused, and breached credentials via HIBP k-anonymity API
@@ -40,21 +48,22 @@ graph TD
 - **Lockout Protection**: Exponential backoff on failed auth attempts (5s → 5min max)
 - **Zero-Knowledge**: Master password never stored, session key in memory only
 - **Cross-Platform**: Windows, macOS, Linux — identical vault file format
-- **Automatic Updates**: GitHub Releases-based updater with Tauri updater plugin
+- **Appearance**: Import explicit VS Code/Zed settings.json color overrides, preview/apply, edit, reload, and reset; no native theme presets.
+- **Updates**: Native signed updater uses a separate feed; review packages are not published to the legacy feed.
 
 ## Prerequisites
 
-- **Bun** (for frontend dependencies)
+- **Bun** (only for the temporary migration frontend)
 - **Rust + Cargo** (stable, with `rustfmt` and `clippy`)
-- **Tauri v2 system dependencies** (see [Tauri docs](https://v2.tauri.app/start/prerequisites/))
+- **GPUI/platform dependencies**: Linux packages are listed in `.github/workflows/ci.yml`; migration-host prerequisites remain in [Tauri docs](https://v2.tauri.app/start/prerequisites/).
 
 ## Development
 
-```bash
-cd frontend
-bun install
-bun run tauri dev
-```
+For a user-run native development launch, run `cargo run -p latch-desktop` from the repository root. This recompiles the changed source; launching an older `target/debug/latch-desktop.exe` will show its old UI. Close the migration host first: both current hosts take an exclusive vault lock.
+
+Agents must follow the repository's no-local-build policy and use check/test commands. A user-run launch and CI-produced packages supply the native runtime checks.
+
+The migration frontend uses `frontend` and `bun run tauri dev`. Existing Google vaults must unlock there and use Settings → Switch to master password before opening native Latch.
 
 ## Building
 
@@ -64,7 +73,10 @@ Builds and releases are handled by GitHub Actions CI. See `.github/workflows/rel
 
 ```
 frontend/          # Tauri v2 + React + TypeScript (api/, components/, hooks/, utils/)
-frontend/src-tauri/ # Rust backend (auth/, commands/, crypto/, vault/, vault_health/)
+frontend/src-tauri/ # Temporary Tauri host and command wrappers
+crates/latch-core/  # Shared auth, crypto, vault, generator, and health code
+crates/latch-desktop/ # Native GPUI host, without the styled component/theme layer
+Cargo.lock         # Shared application lockfile
 docs/adr/          # Architecture Decision Records
 ```
 
@@ -72,7 +84,7 @@ docs/adr/          # Architecture Decision Records
 
 ### Encryption & Key Derivation
 - **Password Auth**: PBKDF2-HMAC-SHA256, 100,000 iterations
-- **OAuth Auth**: Argon2id with m=65536, t=3, p=4
+- **Historical compatibility**: Native reads the original password Argon2id format; legacy OAuth readers remain confined to the migration bridge.
 - **Encryption**: AES-256-GCM with random 12-byte nonce
 - **KDF-per-AuthMethod**: Each auth method uses a tailored KDF (see ADR-0002)
 
@@ -104,9 +116,23 @@ cd frontend/src-tauri && cargo fmt --all && cargo check && cargo clippy --all-ta
 cd frontend && bun run typecheck
 ```
 
+From the repository root, also run native checks:
+
+```bash
+cargo fmt --all -- --check
+cargo check -p latch-desktop --all-targets --locked
+cargo test -p latch-core --locked
+cargo test -p latch-core --features legacy-oauth --locked
+cargo test -p latch-desktop --locked
+cargo clippy -p latch-core -p latch-desktop --all-targets --locked -- -D warnings
+```
+
+Local builds remain prohibited by `AGENTS.md`. Native launch, GPU, accessibility,
+and installer validation require CI-produced artifacts and real platform checks.
+
 ## Acknowledgments
 
-- Built with [Tauri](https://tauri.app), React, and Tailwind CSS
+- Native UI built with [GPUI Kit](https://gpui.rs); temporary migration host uses Tauri and React
 - Cryptographic functions powered by `aes-gcm`, `argon2`, and `pbkdf2`
 - Password strength via `zxcvbn`
 - Breach checking via [Have I Been Pwned](https://haveibeenpwned.com) k-anonymity API

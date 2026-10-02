@@ -7,7 +7,9 @@ on:
       - 'frontend/package.json'
       - 'frontend/bun.lock'
       - 'frontend/src-tauri/Cargo.toml'
-      - 'frontend/src-tauri/Cargo.lock'
+      - 'crates/**/Cargo.toml'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
       - '.github/workflows/security.yml'
   pull_request:
     branches: [main, develop]
@@ -15,7 +17,9 @@ on:
       - 'frontend/package.json'
       - 'frontend/bun.lock'
       - 'frontend/src-tauri/Cargo.toml'
-      - 'frontend/src-tauri/Cargo.lock'
+      - 'crates/**/Cargo.toml'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
       - '.github/workflows/security.yml'
   schedule:
     - cron: '17 3 * * 1'
@@ -37,7 +41,6 @@ jobs:
         run: cargo install cargo-audit --locked
 
       - name: Run Cargo audit
-        working-directory: ./frontend/src-tauri
         run: cargo audit
 
       - name: Setup Bun
