@@ -41,8 +41,7 @@ async function renderWith(
 ) {
   listAliasConfigs.mockResolvedValue({ configs, default_provider_id: defaultProviderId })
   render(<AliasSettings />)
-  await waitFor(() => expect(listAliasConfigs).toHaveBeenCalled())
-  return listAliasConfigs
+  await screen.findByRole('list')
 }
 
 describe('AliasSettings', () => {
