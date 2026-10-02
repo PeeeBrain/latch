@@ -970,6 +970,7 @@ impl Latch {
             return;
         }
         if matches!(self.page, Page::Locked | Page::Setup) {
+            self.lock(window, cx);
             cx.quit();
             return;
         }

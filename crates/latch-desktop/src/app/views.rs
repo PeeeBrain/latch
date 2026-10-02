@@ -722,8 +722,8 @@ impl Render for Latch {
             .key_context("Latch")
             .track_focus(&self.focus)
             .capture_any_mouse_down(cx.listener(|this, _, window, cx| this.activity(window, cx)))
-            .on_action(cx.listener(|this, _: &Quit, _, cx| {
-                this.clear_clipboard(cx);
+            .on_action(cx.listener(|this, _: &Quit, window, cx| {
+                this.lock(window, cx);
                 cx.quit();
             }))
             .on_action(cx.listener(Self::back))
