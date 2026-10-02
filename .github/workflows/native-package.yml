@@ -2,6 +2,11 @@ name: Native GPUI packages
 
 on:
   workflow_dispatch:
+  pull_request:
+    paths:
+      - '.github/workflows/native-package.yml'
+      - 'crates/latch-desktop/Cargo.toml'
+      - 'frontend/src-tauri/icons/**'
 
 permissions:
   contents: read
