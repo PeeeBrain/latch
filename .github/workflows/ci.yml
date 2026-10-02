@@ -121,6 +121,7 @@ jobs:
       - uses: swatinem/rust-cache@v2
         with:
           workspaces: '. -> target'
+          shared-key: native-release
       - name: Check formatting
         run: cargo fmt -p latch-core -p latch-desktop -- --check
       - name: Check native application

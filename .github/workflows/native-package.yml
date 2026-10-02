@@ -27,6 +27,7 @@ jobs:
       - uses: swatinem/rust-cache@v2
         with:
           workspaces: '. -> target'
+          shared-key: native-release
       - name: Linux dependencies
         if: runner.os == 'Linux'
         run: |
