@@ -65,6 +65,8 @@ PR CI also uploads `gpui-preview-<OS>-<architecture>` artifacts containing the n
 
 On macOS/Linux, restore the artifact's executable permission with `chmod +x latch-desktop` before launching. Linux closes by quitting; tray creation alone cannot establish that a desktop exposes the icon. Windows/macOS close to the tray with a locked vault when tray initialization succeeds.
 
+The Native GPUI packages workflow also uploads `native-<OS>-<architecture>` installer artifacts when packaging changes. These include Windows NSIS, macOS app/DMG, and Linux deb/AppImage. The deb targets Ubuntu 24.04; AppImage needs the host's Wayland and GPU drivers. Signing and installed-app upgrade acceptance remain release gates.
+
 Agents must follow the repository's no-local-build policy and use check/test commands. A user-run launch and CI-produced packages supply the native runtime checks.
 
 The migration frontend uses `frontend` and `bun run tauri dev`. Existing Google vaults must unlock there and use Settings → Switch to master password before opening native Latch.

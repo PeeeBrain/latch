@@ -1,9 +1,11 @@
 # Latch GPUI rebuild, Raycast-style UX overhaul, and editor-settings theme import
 
 Research date: 2026-10-03. Repository baseline: `86129b8`, Latch 0.2.6.
-Status: implementation started on `refactor/gpui-rebuild`. The research baseline below describes the original app; the native release gates remain open.
+Status: functional native implementation on `refactor/gpui-rebuild`. The research baseline below describes the original app; the native release gates remain open.
 
 ## Implementation progress
+
+CI has generated Windows NSIS, macOS app/DMG on both architectures, and Linux deb/AppImage review packages. The downloaded AppImage exposed a bundled Wayland ABI mismatch with newer host Mesa drivers; excluding Wayland libraries restored startup under WSLg. The deb now declares its Ubuntu 24.04 runtime dependencies. These checks establish package generation and Linux startup, not signed installation or upgrade acceptance.
 
 The native source now implements a functional compact application on `refactor/gpui-rebuild`: setup/unlock, fuzzy search, keyboard Actions, credential add/edit/delete with draft confirmation, detail/copy/timed reveal, TOTP, contextual password generation, SimpleLogin/DuckDuckGo aliases and provider configuration, local and optional remote health checks, password/device-key rotation, and editor-settings appearance import/preview/apply/reload/reset.
 
