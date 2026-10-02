@@ -138,7 +138,6 @@ mod platform {
     use objc2_security::{
         SecItemCopyMatching, kSecAttrAccount, kSecAttrService, kSecClass, kSecClassGenericPassword,
         kSecMatchLimit, kSecMatchLimitOne, kSecReturnData, kSecUseDataProtectionKeychain,
-        kSecUseOperationPrompt,
     };
     pub fn create_or_retrieve() -> Result<Zeroizing<String>, String> {
         let random = Zeroizing::new(latch_core::auth::password::generate_salt());
@@ -179,7 +178,8 @@ mod platform {
             )
         };
         // SAFETY: attributes outlive the call; a null result pointer requests no output.
-        let status = unsafe { objc2_security::SecItemAdd(&attributes, std::ptr::null_mut()) };
+        let status =
+            unsafe { objc2_security::SecItemAdd(attributes.as_opaque(), std::ptr::null_mut()) };
         if status == objc2_security::errSecDuplicateItem {
             return retrieve();
         }
@@ -192,7 +192,10 @@ mod platform {
         }
         Ok(verified)
     }
+    // Keep the existing Keychain prompt contract until a signed upgrade proves LAContext continuity.
+    #[allow(deprecated)]
     pub fn retrieve() -> Result<Zeroizing<String>, String> {
+        use objc2_security::kSecUseOperationPrompt;
         let account = CFString::from_str(NAME);
         let service = CFString::from_str(DOMAIN);
         let reason = CFString::from_str("Unlock Latch");
@@ -224,7 +227,7 @@ mod platform {
         let mut output = std::ptr::null();
         // SAFETY: the retained dictionary outlives the call; output is a writable
         // pointer. On success the Copy rule transfers one ownership reference.
-        let status = unsafe { SecItemCopyMatching(&query, &mut output) };
+        let status = unsafe { SecItemCopyMatching(query.as_opaque(), &mut output) };
         if status != 0 {
             return Err(format!("Keychain error {status}"));
         }

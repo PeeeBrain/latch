@@ -15,7 +15,9 @@ Tray actions, global shortcuts, close-to-minimize with lock, private Windows/mac
 
 Windows checks and strict Clippy pass for all three Rust packages. Tests pass: 86 core tests without OAuth, 101 with the migration feature, 4 native headless tests, 11 migration-host tests, and 70 frontend tests. Native keyboard tests exercise actual dispatch and focus restoration; lifecycle checks also cover dirty drafts and clipboard ownership. Cargo audit's rustls vulnerability was fixed by updating to 0.23.45; upstream maintenance/GLib warnings remain. Frontend lint passes with its existing AddCredential hook warning; frontend tests retain existing act warnings.
 
-**Still open:** rendered GPU/UI acceptance, screen readers and IME on real OS windows, Windows Hello/macOS signed Keychain continuity, macOS/Linux compilation and desktop behavior, signed installer/update round trips and tampered-update rejection, migration release distribution, and final deletion of the legacy host. No local application build/run was performed because AGENTS.md prohibits local builds. The old bare-shell executable is not refreshed by cargo check/tests; the user must launch recompiled source or a new CI artifact.
+Ubuntu WSL compilation, strict Clippy, 86 core tests and all four native headless UI tests also pass. PR CI uploads a review executable for each platform after its checks; these are development artifacts, not signed installers.
+
+**Still open:** rendered GPU/UI acceptance, screen readers and IME on real OS windows, Windows Hello/macOS signed Keychain continuity, macOS compilation and all-platform desktop behavior, signed installer/update round trips and tampered-update rejection, migration release distribution, and final deletion of the legacy host. No local application build/run was performed because AGENTS.md prohibits local builds. The old bare-shell executable is not refreshed by cargo check/tests; the user must launch recompiled source or a new CI artifact.
 
 ## Outcome and agreed scope
 

@@ -70,6 +70,17 @@ enum Reply {
     Biometric,
     Providers(Vec<vault::alias::AliasProviderInfo>, Option<String>),
 }
+const COMMANDS: [(&str, &str); 9] = [
+    ("generator", "Generate password"),
+    ("details", "View selected credential"),
+    ("new", "New credential"),
+    ("edit", "Edit selected credential"),
+    ("username", "Copy username"),
+    ("totp", "Copy TOTP"),
+    ("health", "Password health"),
+    ("settings", "Settings"),
+    ("lock", "Lock vault"),
+];
 pub struct Latch {
     window: AnyWindowHandle,
     vault: Arc<Mutex<VaultCoordinator>>,
@@ -77,6 +88,7 @@ pub struct Latch {
     page: Page,
     fields: Vec<Entity<TextInput>>,
     query: Entity<TextInput>,
+    action_query: Entity<TextInput>,
     focus: FocusHandle,
     previews: Vec<EntryPreview>,
     selected: usize,
@@ -140,6 +152,7 @@ impl Latch {
             .and_then(|metadata| metadata.modified().ok());
         let query =
             cx.new(|cx| TextInput::new("Search credentials or type > for commands", false, cx));
+        let action_query = cx.new(|cx| TextInput::new("Search actions", false, cx));
         let mut this = Self {
             window: window.window_handle(),
             vault: Arc::new(Mutex::new(VaultCoordinator::new(
@@ -151,6 +164,7 @@ impl Latch {
             page,
             fields: vec![],
             query,
+            action_query,
             focus: cx.focus_handle(),
             previews: vec![],
             selected: 0,
@@ -188,6 +202,8 @@ impl Latch {
             }
         })
         .detach();
+        cx.observe(&this.action_query, |_, _, cx| cx.notify())
+            .detach();
         this.auth_fields(window, cx);
         let view = cx.entity().downgrade();
         window.on_window_should_close(cx, move |window, cx| {
@@ -594,6 +610,43 @@ impl Latch {
                     .map(|entry| entry.id.clone())
             })
     }
+    fn open_actions(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let filter = self
+            .query
+            .read(cx)
+            .value()
+            .strip_prefix('>')
+            .unwrap_or("")
+            .trim()
+            .to_owned();
+        self.action_query
+            .update(cx, |query, cx| query.set_value(filter, cx));
+        self.page = Page::Actions;
+        window.focus(&self.focus, cx);
+        cx.notify();
+    }
+    fn run_command(&mut self, id: &str, window: &mut Window, cx: &mut Context<Self>) {
+        match id {
+            "generator" => self.open_generator(window, cx),
+            "details" => {
+                if let Some(id) = self.selected_id() {
+                    self.work(cx, move |vault| {
+                        vault.with_vault(|_, workspace| {
+                            vault::entries::get_full(workspace, &id).map(Reply::Detail)
+                        })
+                    });
+                }
+            }
+            "new" => self.add(window, cx),
+            "edit" => self.edit(window, cx),
+            "username" => self.copy_field("username", cx),
+            "totp" => self.copy_field("totp", cx),
+            "health" => self.health(cx),
+            "settings" => self.settings(window, cx),
+            "lock" => self.lock(window, cx),
+            _ => {}
+        }
+    }
     fn copy_field(&mut self, field: &'static str, cx: &mut Context<Self>) {
         let Some(id) = self.selected_id() else {
             return;
@@ -784,8 +837,7 @@ impl Latch {
             }
             Page::Browse => {
                 if self.query.read(cx).value().starts_with('>') {
-                    self.page = Page::Actions;
-                    window.focus(&self.focus, cx);
+                    self.open_actions(window, cx);
                 } else {
                     self.copy_field("password", cx);
                 }
@@ -801,6 +853,15 @@ impl Latch {
                 }
             }
             Page::Details => self.copy_field("password", cx),
+            Page::Actions => {
+                let filter = self.action_query.read(cx).value().trim().to_lowercase();
+                if let Some((id, _)) = COMMANDS
+                    .iter()
+                    .find(|(_, label)| label.to_lowercase().contains(&filter))
+                {
+                    self.run_command(id, window, cx);
+                }
+            }
             Page::Generator => self.use_generated(window, cx),
             Page::Discard => {
                 self.page = Page::Browse;
@@ -1268,6 +1329,29 @@ mod tests {
         cx.update(|_, cx| {
             assert!(
                 view.read(cx).page == Page::Generator,
+                "{:?}",
+                view.read(cx).page
+            );
+        });
+        cx.update(|window, cx| {
+            view.update(cx, |this, cx| {
+                this.back(&super::Back, window, cx);
+                this.back(&super::Back, window, cx);
+            });
+        });
+        cx.run_until_parked();
+        cx.update(|window, cx| {
+            view.update(cx, |this, cx| {
+                this.query
+                    .update(cx, |query, cx| query.set_value(">health".into(), cx));
+                this.submit(&Submit, window, cx);
+                this.submit(&Submit, window, cx);
+            });
+        });
+        cx.run_until_parked();
+        cx.update(|_, cx| {
+            assert!(
+                view.read(cx).page == Page::Health,
                 "{:?}",
                 view.read(cx).page
             );

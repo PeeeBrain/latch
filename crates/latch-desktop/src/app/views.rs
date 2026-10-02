@@ -98,9 +98,7 @@ impl Render for Latch {
                         "commands",
                         "Open commands",
                         |this, window, cx| {
-                            this.page = Page::Actions;
-                            window.focus(&this.focus, cx);
-                            cx.notify();
+                            this.open_actions(window, cx);
                         },
                         cx,
                     ));
@@ -313,69 +311,23 @@ impl Render for Latch {
                     ));
             }
             Page::Actions => {
-                body = body
-                    .child(self.button(
-                        "generator",
-                        "Generate password",
-                        |this, window, cx| this.open_generator(window, cx),
-                        cx,
-                    ))
-                    .child(self.button(
-                        "details",
-                        "View selected credential",
-                        |this, _, cx| {
-                            if let Some(id) = this.selected_id() {
-                                this.work(cx, move |vault| {
-                                    vault.with_vault(|_, workspace| {
-                                        vault::entries::get_full(workspace, &id).map(Reply::Detail)
-                                    })
-                                });
-                            }
-                        },
-                        cx,
-                    ))
-                    .child(self.button(
-                        "new",
-                        "New credential / Ctrl+N",
-                        |this, window, cx| this.add(window, cx),
-                        cx,
-                    ))
-                    .child(self.button(
-                        "edit",
-                        "Edit selected / Ctrl+E",
-                        |this, window, cx| this.edit(window, cx),
-                        cx,
-                    ))
-                    .child(self.button(
-                        "username",
-                        "Copy username / Ctrl+Shift+C",
-                        |this, _, cx| this.copy_field("username", cx),
-                        cx,
-                    ))
-                    .child(self.button(
-                        "totp",
-                        "Copy TOTP / Ctrl+T",
-                        |this, _, cx| this.copy_field("totp", cx),
-                        cx,
-                    ))
-                    .child(self.button(
-                        "health",
-                        "Password health",
-                        |this, _, cx| this.health(cx),
-                        cx,
-                    ))
-                    .child(self.button(
-                        "settings",
-                        "Settings / Ctrl+,",
-                        |this, window, cx| this.settings(window, cx),
-                        cx,
-                    ))
-                    .child(self.button(
-                        "lock",
-                        "Lock vault / Ctrl+L",
-                        |this, window, cx| this.lock(window, cx),
-                        cx,
-                    ));
+                body = body.child(self.action_query.clone());
+                let filter = self.action_query.read(cx).value().trim().to_lowercase();
+                let mut found = false;
+                for (id, label) in COMMANDS {
+                    if label.to_lowercase().contains(&filter) {
+                        found = true;
+                        body = body.child(self.button(
+                            id,
+                            label,
+                            move |this, window, cx| this.run_command(id, window, cx),
+                            cx,
+                        ));
+                    }
+                }
+                if !found {
+                    body = body.child("No matching actions");
+                }
             }
             Page::Appearance | Page::Preview => {
                 body=body.child("Import explicit color overrides from existing editor settings. Unrelated settings are discarded.")
@@ -797,9 +749,7 @@ impl Render for Latch {
                     && !this.busy
                     && !this.guard_draft(window, cx)
                 {
-                    this.page = Page::Actions;
-                    window.focus(&this.focus, cx);
-                    cx.notify();
+                    this.open_actions(window, cx);
                 }
             }))
             .on_action(cx.listener(|this, _: &CopyUsername, _, cx| this.copy_field("username", cx)))
