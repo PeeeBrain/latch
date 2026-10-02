@@ -721,6 +721,7 @@ impl Render for Latch {
             .aria_label("Latch password manager")
             .key_context("Latch")
             .track_focus(&self.focus)
+            .capture_any_mouse_down(cx.listener(|this, _, window, cx| this.activity(window, cx)))
             .on_action(cx.listener(|this, _: &Quit, _, cx| {
                 this.clear_clipboard(cx);
                 cx.quit();
