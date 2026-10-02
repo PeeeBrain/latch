@@ -583,16 +583,40 @@ impl Latch {
         self.generated = Zeroizing::new(String::new());
         self.clear_clipboard(cx);
         let vault = self.vault.clone();
-        cx.background_executor()
-            .spawn(async move {
-                if let Ok(mut vault) = vault.lock() {
-                    let _ = vault.with_vault(|_, workspace| {
-                        workspace.lock();
-                        Ok(())
-                    });
+        let generation = self.epoch.load(Ordering::SeqCst);
+        let task = cx.background_executor().spawn(async move {
+            vault
+                .lock()
+                .map_err(|_| "Vault service unavailable".to_owned())?
+                .with_vault(|storage, workspace| {
+                    workspace.lock();
+                    if was_setup {
+                        storage.inspect().map(|header| header.is_some())
+                    } else {
+                        Ok(false)
+                    }
+                })
+        });
+        cx.spawn_in(window, async move |view, cx| {
+            let result = task.await;
+            let _ = view.update_in(cx, |this, window, cx| {
+                if this.epoch.load(Ordering::SeqCst) != generation || this.page != Page::Setup {
+                    return;
                 }
-            })
-            .detach();
+                match result {
+                    Ok(false) => return,
+                    Ok(true) => this.page = Page::Locked,
+                    Err(error) => {
+                        this.page = Page::Locked;
+                        this.blocked = true;
+                        this.notice = error;
+                    }
+                }
+                this.auth_fields(window, cx);
+                cx.notify();
+            });
+        })
+        .detach();
         self.page = if was_setup { Page::Setup } else { Page::Locked };
         self.notice.clear();
         self.query
@@ -733,7 +757,11 @@ impl Latch {
         }
     }
     fn submit(&mut self, _: &Submit, window: &mut Window, cx: &mut Context<Self>) {
-        if self.busy || self.fields.iter().any(|field| field.read(cx).composing()) {
+        if self.busy
+            || self.query.read(cx).composing()
+            || self.action_query.read(cx).composing()
+            || self.fields.iter().any(|field| field.read(cx).composing())
+        {
             return;
         }
         match self.page {
@@ -1265,8 +1293,62 @@ pub fn init(cx: &mut App) {
 #[cfg(test)]
 mod tests {
     use super::{Latch, Page, Submit};
-    use gpui_kit::TestAppContext;
+    use gpui_kit::{Focusable, TestAppContext};
     use latch_core::vault::storage::VaultStorage;
+
+    #[gpui_kit::test]
+    fn lock_after_setup_commits_can_unlock_the_created_vault(cx: &mut TestAppContext) {
+        let directory = tempfile::tempdir().unwrap();
+        cx.update(gpui_kit::init);
+        let window = cx.add_window(|window, cx| {
+            Latch::new(
+                VaultStorage {
+                    path: directory.path().join("vault.enc"),
+                },
+                window,
+                cx,
+            )
+        });
+        window
+            .update(cx, |this, window, cx| {
+                // The storage commit can finish before the UI receives its setup reply.
+                let salt = latch_core::auth::password::generate_salt();
+                let key =
+                    latch_core::auth::password::derive_key("a long test master password", &salt);
+                this.vault
+                    .lock()
+                    .unwrap()
+                    .with_vault(|storage, workspace| {
+                        latch_core::vault::provision::provision(
+                            storage,
+                            workspace,
+                            &key,
+                            latch_core::auth::method::AuthMethod::Password,
+                            &hex::encode(salt),
+                        )
+                    })
+                    .unwrap();
+                this.lock(window, cx);
+            })
+            .unwrap();
+        cx.run_until_parked();
+        window
+            .update(cx, |this, window, cx| {
+                assert!(this.page == Page::Locked, "{:?}", this.page);
+                assert_eq!(this.fields.len(), 1);
+                this.fields[0].update(cx, |field, cx| {
+                    field.set_value("a long test master password".into(), cx)
+                });
+                this.submit(&Submit, window, cx);
+            })
+            .unwrap();
+        cx.run_until_parked();
+        window
+            .update(cx, |this, _, _| {
+                assert!(this.page == Page::Browse, "{}", this.notice)
+            })
+            .unwrap();
+    }
 
     #[gpui_kit::test]
     fn keyboard_can_submit_auth_and_activate_an_action_button(cx: &mut TestAppContext) {
@@ -1345,9 +1427,11 @@ mod tests {
                 this.query
                     .update(cx, |query, cx| query.set_value(">health".into(), cx));
                 this.submit(&Submit, window, cx);
-                this.submit(&Submit, window, cx);
+                window.focus(&this.action_query.read(cx).focus_handle(cx), cx);
             });
+            window.draw(cx).clear(cx);
         });
+        cx.simulate_keystrokes("enter");
         cx.run_until_parked();
         cx.update(|_, cx| {
             assert!(

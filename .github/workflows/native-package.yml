@@ -16,6 +16,8 @@ jobs:
             formats: nsis
           - os: macos-latest
             formats: app,dmg
+          - os: macos-15-intel
+            formats: app,dmg
           - os: ubuntu-24.04
             formats: deb,appimage
     runs-on: ${{ matrix.os }}

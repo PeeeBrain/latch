@@ -61,6 +61,8 @@ graph TD
 
 For a user-run native development launch, run `cargo run -p latch-desktop` from the repository root. This recompiles the changed source; launching an older `target/debug/latch-desktop.exe` will show its old UI. Close the migration host first: both current hosts take an exclusive vault lock.
 
+PR CI also uploads `gpui-preview-<OS>-<architecture>` artifacts containing the new development executable. Download the artifact matching your platform from its completed CI run, extract it, and launch `latch-desktop.exe` on Windows or `latch-desktop` on macOS/Linux. These previews use the existing vault location and are not signed installers.
+
 Agents must follow the repository's no-local-build policy and use check/test commands. A user-run launch and CI-produced packages supply the native runtime checks.
 
 The migration frontend uses `frontend` and `bun run tauri dev`. Existing Google vaults must unlock there and use Settings → Switch to master password before opening native Latch.

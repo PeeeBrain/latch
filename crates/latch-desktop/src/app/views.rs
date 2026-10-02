@@ -731,6 +731,11 @@ impl Render for Latch {
                 if this.focus.is_focused(window)
                     || this.query.read(cx).focus_handle(cx).is_focused(window)
                     || this
+                        .action_query
+                        .read(cx)
+                        .focus_handle(cx)
+                        .is_focused(window)
+                    || this
                         .fields
                         .iter()
                         .any(|field| field.read(cx).focus_handle(cx).is_focused(window))
