@@ -236,10 +236,8 @@ mod platform {
         let data = retained
             .downcast::<CFData>()
             .map_err(|_| "Invalid Keychain result")?;
-        // SAFETY: CFData owns len initialized bytes and remains alive while copied.
-        let bytes = unsafe { std::slice::from_raw_parts(data.byte_ptr(), data.len() as usize) };
         let value =
-            String::from_utf8(bytes.to_vec()).map_err(|_| "Invalid Keychain key encoding")?;
+            String::from_utf8(data.to_vec()).map_err(|_| "Invalid Keychain key encoding")?;
         Ok(Zeroizing::new(value))
     }
 }
