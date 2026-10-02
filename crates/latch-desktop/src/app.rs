@@ -205,6 +205,15 @@ impl Latch {
         cx.observe(&this.action_query, |_, _, cx| cx.notify())
             .detach();
         this.auth_fields(window, cx);
+        let activity_view = cx.entity().downgrade();
+        cx.intercept_keystrokes(move |_, window, cx| {
+            let _ = activity_view.update(cx, |this, cx| {
+                if this.window == window.window_handle() {
+                    this.activity(window, cx);
+                }
+            });
+        })
+        .detach();
         let view = cx.entity().downgrade();
         window.on_window_should_close(cx, move |window, cx| {
             let _ = view.update(cx, |this, cx| this.lock(window, cx));
@@ -495,6 +504,27 @@ impl Latch {
             Err(error) => self.notice = format!("{error}. Last valid appearance retained."),
         }
         cx.notify();
+    }
+    fn activity(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if matches!(self.page, Page::Locked | Page::Setup) {
+            return;
+        }
+        let expired = if let Ok(mut vault) = self.vault.try_lock() {
+            vault
+                .with_vault(|_, workspace| {
+                    workspace.check_session()?;
+                    workspace.refresh();
+                    Ok(())
+                })
+                .is_err()
+        } else {
+            false
+        };
+        if expired {
+            self.lock(window, cx);
+            self.notice = "Session expired. Unlock to continue.".into();
+            cx.stop_propagation();
+        }
     }
     fn tick(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self
@@ -1385,7 +1415,32 @@ mod tests {
                 "{}",
                 view.read(cx).notice
             );
+            view.read(cx)
+                .vault
+                .lock()
+                .unwrap()
+                .with_vault(|_, workspace| {
+                    workspace.session_start =
+                        Some(std::time::SystemTime::now() - std::time::Duration::from_secs(60));
+                    Ok(())
+                })
+                .unwrap();
             window.draw(cx).clear(cx);
+        });
+        cx.simulate_keystrokes("tab");
+        cx.update(|_, cx| {
+            view.read(cx)
+                .vault
+                .lock()
+                .unwrap()
+                .with_vault(|_, workspace| {
+                    assert!(
+                        workspace.session_start.unwrap().elapsed().unwrap()
+                            < std::time::Duration::from_secs(5)
+                    );
+                    Ok(())
+                })
+                .unwrap();
         });
         cx.simulate_keystrokes("ctrl-k");
         cx.update(|window, cx| {
