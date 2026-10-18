@@ -24,7 +24,7 @@ excluded-libraries = ["libwayland-*"]
 depends = ["libc6 (>= 2.39)", "libgtk-3-0t64", "libssl3t64", "libxkbcommon-x11-0", "libxcb-shape0", "libxcb-xfixes0", "libxcb-randr0", "libvulkan1", "libegl1", "libayatana-appindicator3-1"]
 
 [dependencies]
-gpui-kit = { version = "=0.7.0", default-features = false, features = ["component", "assets"] }
+gpui-kit = { version = "=0.7.3", default-features = false, features = ["component", "assets"] }
 latch-core = { path = "../latch-core" }
 zeroize = "1.7"
 unicode-segmentation = "1.12"
@@ -57,4 +57,4 @@ objc2-app-kit = { version = "0.3", default-features = false, features = ["NSPast
 objc2-foundation = "0.3"
 
 [dev-dependencies]
-gpui-kit = { version = "=0.7.0", default-features = false, features = ["test-support"] }
+gpui-kit = { version = "=0.7.3", default-features = false, features = ["test-support"] }
