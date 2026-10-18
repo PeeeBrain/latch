@@ -227,20 +227,18 @@ pub struct Latch {
     installing: bool,
 }
 impl Latch {
+    fn auth_state(storage: &VaultStorage) -> (Page, String, bool, bool) {
+        match storage.inspect() {
+            Ok(None) => (Page::Setup, String::new(), false, false),
+            Ok(Some(header)) if matches!(header.kdf.as_str(), "password-pbkdf2" | "argon2id") => (Page::Locked, String::new(), false, false),
+            Ok(Some(header)) if header.kdf.starts_with("oauth-") => (Page::Locked, "This Google vault needs migration in the previous Latch app. Your vault has not been changed.".into(), true, false),
+            Ok(Some(header)) if header.kdf == "biometric-keychain" => (Page::Locked, String::new(), !crate::biometric::supported(), true),
+            Ok(Some(_)) => (Page::Locked, "This vault needs a compatible Latch release. Your vault has not been changed.".into(), true, false),
+            Err(error) => (Page::Locked, error, true, false),
+        }
+    }
     pub fn new(storage: VaultStorage, window: &mut Window, cx: &mut Context<Self>) -> Self {
-        let (page, notice, blocked) = match storage.inspect() {
-            Ok(None) => (Page::Setup, String::new(), false),
-            Ok(Some(header)) if matches!(header.kdf.as_str(), "password-pbkdf2" | "argon2id") => (Page::Locked, String::new(), false),
-            Ok(Some(header)) if header.kdf.starts_with("oauth-") => (Page::Locked, "This Google vault needs migration in the previous Latch app. Your vault has not been changed.".into(), true),
-            Ok(Some(header)) if header.kdf == "biometric-keychain" => (Page::Locked, String::new(), !crate::biometric::supported()),
-            Ok(Some(_)) => (Page::Locked, "This vault needs a compatible Latch release. Your vault has not been changed.".into(), true),
-            Err(error) => (Page::Locked, error, true),
-        };
-        let biometric = storage
-            .inspect()
-            .ok()
-            .flatten()
-            .is_some_and(|header| header.kdf == "biometric-keychain");
+        let (page, notice, blocked, biometric) = Self::auth_state(&storage);
         let appearance_directory = storage
             .path
             .parent()
@@ -769,7 +767,7 @@ impl Latch {
         self.reveal_until = None;
         let was_setup = self.page == Page::Setup;
         self.epoch.fetch_add(1, Ordering::SeqCst);
-        self.busy = self.installing;
+        self.busy = true;
         self.fields.clear();
         self.previews.clear();
         self.favicon_cancel.send_replace(());
@@ -792,22 +790,27 @@ impl Latch {
                 .map_err(|_| "Vault service unavailable".to_owned())?
                 .with_vault(|storage, workspace| {
                     workspace.lock();
-                    if was_setup {
-                        storage.inspect().map(|header| header.is_some())
-                    } else {
-                        Ok(false)
-                    }
+                    Ok(Self::auth_state(storage))
                 })
         });
         cx.spawn_in(window, async move |view, cx| {
             let result = task.await;
             let _ = view.update_in(cx, |this, window, cx| {
-                if this.epoch.load(Ordering::SeqCst) != generation || this.page != Page::Setup {
+                if this.epoch.load(Ordering::SeqCst) != generation {
                     return;
                 }
+                this.busy = this.installing;
                 match result {
-                    Ok(false) => return,
-                    Ok(true) => this.page = Page::Locked,
+                    Ok((page, notice, blocked, biometric)) => {
+                        if page != Page::Setup {
+                            this.page = page;
+                        }
+                        if !notice.is_empty() {
+                            this.notice = notice;
+                        }
+                        this.blocked = blocked;
+                        this.biometric = biometric;
+                    }
                     Err(error) => {
                         this.page = Page::Locked;
                         this.blocked = true;
@@ -1797,6 +1800,87 @@ mod tests {
         window
             .update(cx, |this, _, _| {
                 assert!(this.page == Page::Browse, "{}", this.notice)
+            })
+            .unwrap();
+    }
+
+    #[gpui_kit::test]
+    fn lock_refreshes_committed_auth_method(cx: &mut TestAppContext) {
+        let directory = tempfile::tempdir().unwrap();
+        let storage = VaultStorage {
+            path: directory.path().join("vault.enc"),
+        };
+        latch_core::vault::provision::provision(
+            &storage,
+            &mut latch_core::vault::workspace::Workspace::new(),
+            &[7; 32],
+            latch_core::auth::method::AuthMethod::Biometric,
+            "",
+        )
+        .unwrap();
+        cx.update(gpui_kit::init);
+        let window = cx.add_window(|window, cx| Latch::new(storage, window, cx));
+        window
+            .update(cx, |this, window, cx| {
+                this.vault
+                    .lock()
+                    .unwrap()
+                    .with_vault(|storage, workspace| {
+                        latch_core::vault::access::access(storage, workspace, &[7; 32])?;
+                        latch_core::vault::rotate::password(
+                            storage,
+                            workspace,
+                            "a new test master password",
+                        )
+                    })
+                    .unwrap();
+                // Rotation committed, but its UI reply has not updated the old method.
+                this.page = Page::Rotate;
+                assert!(this.biometric);
+                this.lock(window, cx);
+            })
+            .unwrap();
+        cx.run_until_parked();
+        window
+            .update(cx, |this, window, cx| {
+                assert_eq!(this.page, Page::Locked);
+                assert!(!this.biometric, "the committed vault requires a password");
+                assert!(!this.blocked);
+                assert!(!this.busy);
+                assert_eq!(this.fields.len(), 1);
+                this.fields[0].update(cx, |field, cx| {
+                    field.set_value("a new test master password".into(), cx)
+                });
+                this.submit(&Submit, window, cx);
+            })
+            .unwrap();
+        cx.run_until_parked();
+        window
+            .update(cx, |this, window, cx| {
+                assert_eq!(this.page, Page::Browse, "{}", this.notice);
+                this.vault
+                    .lock()
+                    .unwrap()
+                    .with_vault(|storage, workspace| {
+                        latch_core::vault::rotate::rotate(
+                            storage,
+                            workspace,
+                            &[8; 32],
+                            latch_core::auth::method::AuthMethod::Biometric,
+                            "",
+                        )
+                    })
+                    .unwrap();
+                this.lock(window, cx);
+            })
+            .unwrap();
+        cx.run_until_parked();
+        window
+            .update(cx, |this, _, _| {
+                assert_eq!(this.page, Page::Locked);
+                assert!(this.biometric);
+                assert!(this.fields.is_empty());
+                assert_eq!(this.blocked, !crate::biometric::supported());
             })
             .unwrap();
     }
