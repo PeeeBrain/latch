@@ -24,7 +24,7 @@ excluded-libraries = ["libwayland-*"]
 depends = ["libc6 (>= 2.39)", "libgtk-3-0t64", "libssl3t64", "libxkbcommon-x11-0", "libxcb-shape0", "libxcb-xfixes0", "libxcb-randr0", "libvulkan1", "libegl1", "libayatana-appindicator3-1"]
 
 [dependencies]
-gpui-kit = { version = "=0.7.0", default-features = false }
+gpui-kit = { version = "=0.7.0", default-features = false, features = ["component", "assets"] }
 latch-core = { path = "../latch-core" }
 zeroize = "1.7"
 unicode-segmentation = "1.12"
@@ -46,7 +46,7 @@ gtk = "0.18"
 tray-icon = { version = "0.24", default-features = false, features = ["gtk"] }
 
 [target.'cfg(target_os = "windows")'.dependencies]
-windows = { version = "0.61", features = ["Foundation", "Storage_Streams", "Security_Credentials", "Security_Credentials_UI", "Security_Cryptography_Core", "Win32_System_DataExchange", "Win32_System_Memory", "Win32_System_Ole"] }
+windows = { version = "0.61", features = ["Foundation", "Storage_Streams", "Security_Credentials", "Security_Credentials_UI", "Security_Cryptography_Core", "Win32_System_DataExchange", "Win32_System_Memory", "Win32_System_Ole", "Win32_Foundation", "Win32_UI_WindowsAndMessaging"] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2-core-foundation = "0.3"

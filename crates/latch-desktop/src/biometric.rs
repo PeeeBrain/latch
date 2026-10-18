@@ -54,6 +54,7 @@ mod platform {
         // wrapping key and CBC encoding. Retrieving the ciphertext alone is insufficient.
         let mut result = KeyCredentialManager::OpenAsync(&HSTRING::from(DOMAIN))?.get()?;
         if create && result.Status()? == KeyCredentialStatus::NotFound {
+            raise_security_prompt();
             result = KeyCredentialManager::RequestCreateAsync(
                 &HSTRING::from(DOMAIN),
                 KeyCredentialCreationOption::FailIfExists,
@@ -68,6 +69,7 @@ mod platform {
             &HSTRING::from(DOMAIN),
             BinaryStringEncoding::Utf8,
         )?;
+        raise_security_prompt();
         let signature = credential.RequestSignAsync(&challenge)?.get()?;
         if signature.Status()? != KeyCredentialStatus::Success {
             return Err(Error::from(HRESULT(0x800704c7u32 as i32)));
@@ -85,6 +87,24 @@ mod platform {
             SymmetricKeyAlgorithmProvider::OpenAlgorithm(&SymmetricAlgorithmNames::AesCbcPkcs7()?)?;
         let key = aes.CreateSymmetricKey(&wrapping)?;
         Ok((key, iv))
+    }
+
+    /// KeyCredentialManager has no owner-window API, so Windows opens the Hello
+    /// prompt behind Latch. Latch is foreground when the user asks to unlock,
+    /// which lets it hand foreground to the prompt once the prompt appears.
+    // ponytail: matches the prompt by window class; revisit if Windows renames it.
+    fn raise_security_prompt() {
+        use windows::Win32::UI::WindowsAndMessaging::{FindWindowW, SetForegroundWindow};
+        std::thread::spawn(|| {
+            for _ in 0..50 {
+                std::thread::sleep(std::time::Duration::from_millis(100));
+                if let Ok(prompt) = unsafe { FindWindowW(w!("Credential Dialog Xaml Host"), None) }
+                {
+                    let _ = unsafe { SetForegroundWindow(prompt) };
+                    return;
+                }
+            }
+        });
     }
 
     pub fn create_or_retrieve() -> Result<Zeroizing<String>> {

@@ -51,17 +51,13 @@ fn tray() -> Result<TrayIcon, String> {
 }
 
 pub fn start(window: AnyWindowHandle, view: Entity<crate::app::Latch>, cx: &mut App) {
-    let modifiers = if cfg!(target_os = "macos") {
-        Modifiers::SUPER
-    } else {
-        Modifiers::CONTROL
-    } | Modifiers::SHIFT;
+    // Same quick-access chord as the previous app: Ctrl+Space on every platform.
     let hotkey = GlobalHotKeyManager::new().and_then(|manager| {
-        manager.register(HotKey::new(Some(modifiers), Code::Space))?;
+        manager.register(HotKey::new(Some(Modifiers::CONTROL), Code::Space))?;
         Ok(manager)
     });
     let status = match &hotkey {
-        Ok(_) => "Quick access: Ctrl+Shift+Space (Cmd+Shift+Space on macOS).".into(),
+        Ok(_) => "Quick access: Ctrl+Space shows or hides Latch.".into(),
         Err(error) => format!(
             "Global shortcut unavailable: {error}. Open Latch from your application launcher."
         ),
@@ -113,7 +109,7 @@ pub fn start(window: AnyWindowHandle, view: Entity<crate::app::Latch>, cx: &mut 
             let mut commands = Vec::new();
             while let Ok(event) = GlobalHotKeyEvent::receiver().try_recv() {
                 if event.state == HotKeyState::Pressed {
-                    commands.push("show".to_string());
+                    commands.push("toggle".to_string());
                 }
             }
             while let Ok(event) = MenuEvent::receiver().try_recv() {

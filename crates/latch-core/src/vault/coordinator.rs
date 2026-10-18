@@ -58,6 +58,10 @@ impl VaultCoordinator {
                 }
                 Ok(())
             }
+            // A wrong key and a damaged vault both fail authentication here.
+            Err(error) if error.starts_with("Decryption failed") => Err(self.record_failed_access(
+                "Incorrect password or key, or the vault is damaged.".to_string(),
+            )),
             Err(error) => Err(self.record_failed_access(error)),
         }
     }

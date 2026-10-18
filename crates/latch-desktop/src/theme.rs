@@ -11,7 +11,7 @@ pub enum Source {
     VsCode,
     Zed,
 }
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, PartialEq, Debug)]
 pub enum Color {
     Background,
     Surface,
@@ -93,6 +93,9 @@ const MAPPING: &[(&[&str], &[&str])] = &[
 #[derive(Clone)]
 pub struct Palette {
     colors: [Hsla; 24],
+    /// Whether this palette targets the dark appearance; neutral washes in
+    /// the shell pick light or dark overlays based on it.
+    pub dark: bool,
 }
 impl Global for Palette {}
 impl Palette {
@@ -125,21 +128,26 @@ impl Palette {
         })
     }
     pub fn fallback(dark: bool) -> Self {
+        // RGBA: translucent roles (borders, hovers, selection washes) carry a
+        // low alpha so they read on any canvas.
         let values = if dark {
             [
-                0x181c24, 0x232934, 0x282f3b, 0xe4e8ef, 0x9ba4b4, 0x202631, 0xe4e8ef, 0x9298a4,
-                0x373d49, 0x303642, 0xe4e8ef, 0x303950, 0xffffff, 0x435680, 0xffffff, 0x52699b,
-                0xabbcff, 0xa7b7ff, 0x435680, 0xff9595, 0xd9b879, 0x94d5a7, 0x181c24, 0x9ba4b4,
+                0x17181cff, 0x1d1e23ff, 0x222328ff, 0xebecf0ff, 0x8d909bff, 0xffffff0a, 0xebecf0ff,
+                0x6b6e79ff, 0xffffff14, 0xffffff0b, 0xebecf0ff, 0xffffff17, 0xffffffff, 0x3f5fe8ff,
+                0xffffffff, 0x4a6af0ff, 0x8ea6ffff, 0x6c8cffff, 0x6c8cff4d, 0xff6b6bff, 0xf0b45aff,
+                0x5fd394ff, 0x17181cff, 0x8d909bff,
             ]
         } else {
             [
-                0xf8f9fb, 0xffffff, 0xffffff, 0x232936, 0x5c6575, 0xffffff, 0x232936, 0x6b7380,
-                0xc8ced8, 0xe9edf4, 0x232936, 0xdce5fb, 0x1b2947, 0x385ca8, 0xffffff, 0x294b94,
-                0x294f9b, 0x385ca8, 0xb7cbf3, 0xa42b35, 0x855700, 0x246b3f, 0xf1f3f7, 0x5c6575,
+                0xf7f7f8ff, 0xffffffff, 0xffffffff, 0x1b1c20ff, 0x6b6e78ff, 0xffffffff, 0x1b1c20ff,
+                0x9a9ca5ff, 0x0000001a, 0x0000000a, 0x1b1c20ff, 0x00000012, 0x111216ff, 0x3f5fe8ff,
+                0xffffffff, 0x3555dcff, 0x3355d6ff, 0x3f5fe8ff, 0x3f5fe833, 0xc93838ff, 0x9a6400ff,
+                0x1f7a4aff, 0xf7f7f8ff, 0x6b6e78ff,
             ]
         };
         Self {
-            colors: values.map(|value| rgb(value).into()),
+            colors: values.map(|value| rgba(value).into()),
+            dark,
         }
     }
     pub fn color(&self, color: Color) -> Hsla {
@@ -170,6 +178,8 @@ impl Appearance {
         )
         .map_err(|_| "Invalid JSONC settings".to_string())?;
         let object = value.as_object().ok_or("Settings must be a JSON object")?;
+        let converted = theme_file_as_settings(object, source);
+        let object = converted.as_ref().unwrap_or(object);
         let mut clean = Map::new();
         let keys: &[&str] = match source {
             Source::VsCode => &[
@@ -336,6 +346,8 @@ impl Appearance {
                 }
             }
         }
+        // Neutral washes follow the imported canvas, not the OS appearance.
+        palette.dark = palette.color(Color::Background).l < 0.5;
         Ok((palette, applied))
     }
     pub fn save(&self, directory: &Path) -> Result<(), String> {
@@ -391,6 +403,190 @@ fn infer(text: &str) -> Result<Source, String> {
         Err("Appearance file has no supported color overrides".into())
     }
 }
+/// Theme files users download share the color keys of settings overrides, so
+/// they are rewritten as the equivalent editor settings. Unparseable colors in
+/// a theme file are skipped rather than rejecting the whole theme.
+fn theme_file_as_settings(
+    object: &Map<String, Value>,
+    source: Source,
+) -> Option<Map<String, Value>> {
+    let usable = |colors: &Value| -> Value {
+        Value::Object(
+            colors
+                .as_object()
+                .into_iter()
+                .flatten()
+                .filter(|(_, value)| {
+                    value
+                        .as_str()
+                        .is_some_and(|color| parse_color(color).is_ok())
+                })
+                .map(|(key, value)| (key.clone(), value.clone()))
+                .collect(),
+        )
+    };
+    let mut settings = Map::new();
+    match source {
+        // Zed theme family: {"themes": [{"name", "appearance", "style"}]}.
+        Source::Zed => {
+            let themes = object.get("themes")?.as_array()?;
+            let pick = |appearance: &str| {
+                themes
+                    .iter()
+                    .find(|theme| theme["appearance"] == appearance)
+                    .and_then(|theme| {
+                        Some((theme["name"].as_str()?.to_owned(), usable(&theme["style"])))
+                    })
+            };
+            let (dark, light) = (pick("dark"), pick("light"));
+            let mut overrides = Map::new();
+            let theme = match (&dark, &light) {
+                (Some((dark, _)), Some((light, _))) => {
+                    serde_json::json!({"mode": "system", "dark": dark, "light": light})
+                }
+                (Some((name, _)), None) | (None, Some((name, _))) => Value::String(name.clone()),
+                (None, None) => return None,
+            };
+            for (name, style) in [dark, light].into_iter().flatten() {
+                overrides.insert(name, style);
+            }
+            settings.insert("theme".into(), theme);
+            settings.insert("theme_overrides".into(), Value::Object(overrides));
+        }
+        Source::VsCode => {
+            let colors = object.get("colors")?;
+            if object.contains_key("workbench.colorCustomizations") {
+                return None;
+            }
+            // Dotted color ids identify VS Code; T3 uses a flat palette with canvas.
+            if colors.as_object()?.keys().any(|key| key.contains('.')) {
+                settings.insert("workbench.colorCustomizations".into(), usable(colors));
+            } else if colors.get("canvas").is_some() {
+                let appearance = object.get("appearance")?.as_str()?;
+                let pick = |mode: &str| {
+                    if appearance == mode {
+                        Some(t3_colors(colors))
+                    } else {
+                        object.get("variants")?.get(mode).map(t3_colors)
+                    }
+                };
+                match (pick("dark"), pick("light")) {
+                    (Some(dark), Some(light)) => {
+                        // Fixed names avoid treating a downloaded name as a selector glob.
+                        settings.extend(serde_json::json!({
+                            "window.autoDetectColorScheme": true,
+                            "workbench.colorTheme": if appearance == "dark" { "T3 Dark" } else { "T3 Light" },
+                            "workbench.preferredDarkColorTheme": "T3 Dark",
+                            "workbench.preferredLightColorTheme": "T3 Light",
+                            "workbench.colorCustomizations": {"[T3 Dark]": dark, "[T3 Light]": light}
+                        }).as_object()?.clone());
+                    }
+                    (Some(colors), None) | (None, Some(colors)) => {
+                        settings.insert("workbench.colorCustomizations".into(), colors);
+                    }
+                    (None, None) => return None,
+                }
+            } else {
+                return None;
+            }
+        }
+    }
+    Some(settings)
+}
+
+fn t3_colors(colors: &Value) -> Value {
+    let mapping: &[(&str, &[&str])] = &[
+        ("editor.background", &["canvas"]),
+        ("sideBar.background", &["surface"]),
+        (
+            "editorWidget.background",
+            &["surfaceOverlay", "surfaceRaised"],
+        ),
+        ("foreground", &["text"]),
+        ("descriptionForeground", &["textMuted"]),
+        ("input.background", &["input"]),
+        ("input.foreground", &["text"]),
+        ("input.placeholderForeground", &["placeholder", "textMuted"]),
+        ("panel.border", &["border"]),
+        (
+            "list.hoverBackground",
+            &["sidebarRowHover", "toolbarControlHover", "surfaceRaised"],
+        ),
+        ("list.hoverForeground", &["text"]),
+        (
+            "list.activeSelectionBackground",
+            &["sidebarRowSelected", "sidebarRowActive", "accentSurface"],
+        ),
+        ("list.activeSelectionForeground", &["sidebarForeground"]),
+        ("button.background", &["accent"]),
+        ("button.foreground", &["accentForeground"]),
+        ("button.hoverBackground", &["messageActionHover", "accent"]),
+        ("textLink.foreground", &["accent"]),
+        ("focusBorder", &["focus"]),
+        ("selection.background", &["terminalSelection"]),
+        ("errorForeground", &["error"]),
+        ("editorWarning.foreground", &["warning"]),
+        ("statusBar.background", &["chrome"]),
+        ("statusBar.foreground", &["textMuted"]),
+    ];
+    Value::Object(
+        mapping
+            .iter()
+            .filter_map(|(target, keys)| {
+                let color = keys.iter().find_map(|key| colors.get(*key))?.as_str()?;
+                let hex = if color.starts_with("oklch(") {
+                    oklch_as_hex(color)?
+                } else {
+                    parse_color(color).ok()?;
+                    color.to_owned()
+                };
+                Some(((*target).into(), Value::String(hex)))
+            })
+            .collect(),
+    )
+}
+
+fn oklch_as_hex(value: &str) -> Option<String> {
+    let mut components = value
+        .strip_prefix("oklch(")?
+        .strip_suffix(')')?
+        .split_whitespace();
+    let mut next = || {
+        components
+            .next()?
+            .parse::<f64>()
+            .ok()
+            .filter(|value| value.is_finite())
+    };
+    let (lightness, chroma, hue) = (next()?, next()?, next()?.to_radians());
+    if components.next().is_some() || chroma < 0.0 {
+        return None;
+    }
+    let (a, b) = (chroma * hue.cos(), chroma * hue.sin());
+    // OKLab inverse matrices: https://bottosson.github.io/posts/oklab/
+    let l = (lightness + 0.3963377774 * a + 0.2158037573 * b).powi(3);
+    let m = (lightness - 0.1055613458 * a - 0.0638541728 * b).powi(3);
+    let s = (lightness - 0.0894841775 * a - 1.2914855480 * b).powi(3);
+    let linear = [
+        4.0767416621 * l - 3.3077115913 * m + 0.2309699292 * s,
+        -1.2684380046 * l + 2.6097574011 * m - 0.3413193965 * s,
+        -0.0041960863 * l - 0.7034186147 * m + 1.7076147010 * s,
+    ];
+    if !linear.iter().all(|channel| channel.is_finite()) {
+        return None;
+    }
+    let [r, g, b] = linear.map(|channel| {
+        let channel = channel.clamp(0.0, 1.0);
+        let srgb = if channel <= 0.0031308 {
+            12.92 * channel
+        } else {
+            1.055 * channel.powf(1.0 / 2.4) - 0.055
+        };
+        (srgb * 255.0).round() as u8
+    });
+    Some(format!("#{r:02x}{g:02x}{b:02x}"))
+}
+
 fn filter_colors(value: &Value, source: Source, selectors: bool) -> Result<Value, String> {
     let mut clean = Map::new();
     for (key, value) in value
@@ -571,6 +767,95 @@ mod tests {
                 .unwrap()
                 .1
                 == 0
+        );
+    }
+
+    #[test]
+    fn t3_theme_imports_variants_and_normalizes_colors() {
+        let theme = serde_json::json!({
+            "version": 1, "name": "[*]", "appearance": "dark",
+            "colors": {
+                "canvas": "#101820", "accent": "oklch(0.627955 0.257683 29.2339)",
+                "accentSurface": "#432123", "error": "unsupported",
+                "warning": "oklch(NaN 0 0)"
+            },
+            "variants": {"light": {
+                "canvas": "#fafafa", "accent": "#33669980",
+                "surface": "oklch(0.5 0 0)"
+            }}
+        });
+        let appearance = Appearance::parse(&theme.to_string(), Source::VsCode).unwrap();
+        for (dark, background, button) in [
+            (true, "#101820", "#ff0000"),
+            (false, "#fafafa", "#33669980"),
+        ] {
+            let (palette, count) = appearance.palette(dark).unwrap();
+            assert!(count > 0);
+            assert_eq!(
+                palette.color(Color::Background),
+                parse_color(background).unwrap()
+            );
+            assert_eq!(palette.color(Color::Button), parse_color(button).unwrap());
+            assert_eq!(
+                palette.color(Color::Error),
+                Palette::fallback(dark).color(Color::Error)
+            );
+            assert_eq!(
+                palette.color(Color::Warning),
+                Palette::fallback(dark).color(Color::Warning)
+            );
+        }
+        assert_eq!(
+            appearance.palette(true).unwrap().0.color(Color::Selected),
+            parse_color("#432123").unwrap()
+        );
+        assert_eq!(
+            appearance.palette(false).unwrap().0.color(Color::Surface),
+            parse_color("#636363").unwrap()
+        );
+        assert!(!appearance.document.to_string().contains("oklch"));
+        let directory = tempfile::tempdir().unwrap();
+        appearance.save(directory.path()).unwrap();
+        let loaded = Appearance::load(directory.path()).unwrap().unwrap();
+        assert_eq!(loaded.document, appearance.document);
+
+        let mut single = theme;
+        single.as_object_mut().unwrap().remove("variants");
+        let single = Appearance::parse(&single.to_string(), Source::VsCode).unwrap();
+        for dark in [true, false] {
+            assert_eq!(
+                single.palette(dark).unwrap().0.color(Color::Button),
+                parse_color("#ff0000").unwrap()
+            );
+        }
+    }
+
+    #[test]
+    fn downloaded_theme_files_import_as_editor_settings() {
+        let zed = r##"{"name":"Pack","themes":[
+          {"name":"Pack Light","appearance":"light","style":{"background":"#eeeeee"}},
+          {"name":"Pack Dark","appearance":"dark","style":{"background":"#101010","text":null,"border":"oklch(1 0 0)"}}
+        ]}"##;
+        let zed = Appearance::parse(zed, Source::Zed).unwrap();
+        let (dark, count) = zed.palette(true).unwrap();
+        assert_eq!(count, 1, "unparseable theme colors are skipped");
+        assert_eq!(
+            dark.color(Color::Background),
+            parse_color("#101010").unwrap()
+        );
+        assert_eq!(
+            zed.palette(false).unwrap().0.color(Color::Background),
+            parse_color("#eeeeee").unwrap()
+        );
+        let vs = r##"{"name":"Mine","type":"dark","colors":{"editor.background":"#202020"},"tokenColors":[]}"##;
+        let (palette, count) = Appearance::parse(vs, Source::VsCode)
+            .unwrap()
+            .palette(true)
+            .unwrap();
+        assert_eq!(count, 1);
+        assert_eq!(
+            palette.color(Color::Background),
+            parse_color("#202020").unwrap()
         );
     }
 }

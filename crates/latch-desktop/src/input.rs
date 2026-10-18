@@ -1,5 +1,6 @@
 // Adapted from the GPUI input example (Apache-2.0). No undo buffer; masked values never enter shaped text.
 use crate::theme::{Color, Palette};
+use crate::ui;
 use std::ops::Range;
 
 use gpui_kit::{
@@ -37,6 +38,7 @@ pub struct TextInput {
     masked: bool,
     secret: bool,
     read_only: bool,
+    bare: bool,
     placeholder: SharedString,
     selected_range: Range<usize>,
     selection_reversed: bool,
@@ -55,6 +57,7 @@ impl TextInput {
             masked,
             secret: masked,
             read_only: false,
+            bare: false,
             placeholder: label.to_owned().into(),
             selected_range: 0..0,
             selection_reversed: false,
@@ -65,8 +68,10 @@ impl TextInput {
             is_selecting: false,
         }
     }
-    pub fn label(&self) -> SharedString {
-        self.placeholder.clone()
+    /// Borderless, larger variant for the shell header search.
+    pub fn bare(mut self) -> Self {
+        self.bare = true;
+        self
     }
     pub fn value(&self) -> &str {
         &self.content
@@ -215,9 +220,9 @@ impl TextInput {
         window.show_character_palette();
     }
 
-    fn paste(&mut self, _: &Paste, window: &mut Window, cx: &mut Context<Self>) {
+    fn paste(&mut self, _: &Paste, _: &mut Window, cx: &mut Context<Self>) {
         if let Some(text) = cx.read_from_clipboard().and_then(|item| item.text()) {
-            self.replace_text_in_range(None, &text.replace("\n", " "), window, cx);
+            self.insert_text(None, &text.replace("\n", " "), cx);
         }
     }
 
@@ -228,13 +233,46 @@ impl TextInput {
             ));
         }
     }
-    fn cut(&mut self, _: &Cut, window: &mut Window, cx: &mut Context<Self>) {
+    fn cut(&mut self, _: &Cut, _: &mut Window, cx: &mut Context<Self>) {
         if !self.secret && !self.read_only && !self.selected_range.is_empty() {
             cx.write_to_clipboard(ClipboardItem::new_string(
                 self.content[self.selected_range.clone()].to_string(),
             ));
-            self.replace_text_in_range(None, "", window, cx)
+            self.insert_text(None, "", cx)
         }
+    }
+
+    /// Replaces the given range, else the marked text, else the selection.
+    fn insert_text(
+        &mut self,
+        range_utf16: Option<Range<usize>>,
+        new_text: &str,
+        cx: &mut Context<Self>,
+    ) {
+        let range = range_utf16
+            .as_ref()
+            .map(|range_utf16| self.range_from_utf16(range_utf16))
+            .or(self.marked_range.clone())
+            .unwrap_or(self.selected_range.clone());
+
+        // Ctrl chords such as Ctrl+K can also deliver their control character;
+        // a single-line field drops it instead of replacing the selection.
+        let filtered = Zeroizing::new(
+            new_text
+                .chars()
+                .filter(|ch| !ch.is_control())
+                .collect::<String>(),
+        );
+        if filtered.is_empty() && !new_text.is_empty() {
+            return;
+        }
+        let new_text = filtered.as_str();
+        if !self.replace(range.clone(), new_text) {
+            return;
+        }
+        self.selected_range = range.start + new_text.len()..range.start + new_text.len();
+        self.marked_range.take();
+        cx.notify();
     }
 
     fn move_to(&mut self, offset: usize, cx: &mut Context<Self>) {
@@ -402,21 +440,16 @@ impl EntityInputHandler for TextInput {
         &mut self,
         range_utf16: Option<Range<usize>>,
         new_text: &str,
-        _: &mut Window,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let range = range_utf16
-            .as_ref()
-            .map(|range_utf16| self.range_from_utf16(range_utf16))
-            .or(self.marked_range.clone())
-            .unwrap_or(self.selected_range.clone());
-
-        if !self.replace(range.clone(), new_text) {
+        // A Ctrl chord is a shortcut, never typing, but Windows can still
+        // deliver its character (Ctrl+, types ","). AltGr reports Ctrl+Alt.
+        let modifiers = window.modifiers();
+        if modifiers.control && !modifiers.alt {
             return;
         }
-        self.selected_range = range.start + new_text.len()..range.start + new_text.len();
-        self.marked_range.take();
-        cx.notify();
+        self.insert_text(range_utf16, new_text, cx);
     }
 
     fn replace_and_mark_text_in_range(
@@ -692,8 +725,10 @@ impl Element for TextElement {
 
 impl Render for TextInput {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let border = cx.global::<Palette>().color(Color::Border);
-        let focus = cx.global::<Palette>().color(Color::Focus);
+        let palette = cx.global::<Palette>().clone();
+        let border = palette.color(Color::Border);
+        let focus = palette.color(Color::Focus);
+        let bare = self.bare;
         div()
             .flex()
             .id("input")
@@ -706,14 +741,11 @@ impl Render for TextInput {
             .when(!self.secret, |field| {
                 field.aria_value(self.content.to_string())
             })
-            .tab_stop(true)
             .key_context("TextInput")
-            .track_focus(&self.focus_handle(cx))
+            .track_focus(&self.focus_handle(cx).tab_stop(true))
             .cursor(CursorStyle::IBeam)
             .overflow_hidden()
-            .border_1()
-            .border_color(border)
-            .focus(move |style| style.border_color(focus))
+            .w_full()
             .on_action(cx.listener(Self::backspace))
             .on_action(cx.listener(Self::delete))
             .on_action(cx.listener(Self::left))
@@ -731,17 +763,30 @@ impl Render for TextInput {
             .on_mouse_up(MouseButton::Left, cx.listener(Self::on_mouse_up))
             .on_mouse_up_out(MouseButton::Left, cx.listener(Self::on_mouse_up))
             .on_mouse_move(cx.listener(Self::on_mouse_move))
-            .bg(cx.global::<Palette>().color(Color::Input))
-            .text_color(cx.global::<Palette>().color(Color::InputText))
-            .line_height(px(22.))
-            .text_size(px(15.))
-            .child(
-                div()
-                    .h(px(22. + 8. * 2.))
-                    .w_full()
-                    .p(px(8.))
-                    .child(TextElement { input: cx.entity() }),
-            )
+            .text_color(palette.color(Color::InputText))
+            .when(bare, |field| {
+                field
+                    .line_height(px(24.))
+                    .text_size(px(ui::TEXT_LG))
+                    .child(div().w_full().child(TextElement { input: cx.entity() }))
+            })
+            .when(!bare, |field| {
+                field
+                    .rounded(px(ui::RADIUS - 2.))
+                    .border_1()
+                    .border_color(border)
+                    .focus(move |style| style.border_color(focus))
+                    .bg(palette.color(Color::Input))
+                    .line_height(px(20.))
+                    .text_size(px(ui::TEXT))
+                    .child(
+                        div()
+                            .w_full()
+                            .px(px(10.))
+                            .py(px(6.))
+                            .child(TextElement { input: cx.entity() }),
+                    )
+            })
     }
 }
 
@@ -809,6 +854,13 @@ mod tests {
                         .text_for_range(0..5, &mut actual, window, cx)
                         .as_deref(),
                     Some("•••••")
+                );
+                let before = input.value().to_owned();
+                input.replace_text_in_range(None, "\u{b}", window, cx);
+                assert_eq!(
+                    input.value(),
+                    before,
+                    "Ctrl+K's control char must not be typed"
                 );
                 input.set_value(String::new(), cx);
                 assert!(!input.composing());

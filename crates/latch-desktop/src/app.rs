@@ -3,6 +3,7 @@ mod views;
 use crate::{
     input::TextInput,
     theme::{self, Appearance, Color, Palette, Source},
+    ui,
 };
 use gpui_kit::{prelude::*, *};
 use latch_core::{
@@ -37,7 +38,9 @@ gpui_kit::actions!(
         CopyTotp,
         Tab,
         TabPrevious,
-        ResetAppearance
+        ResetAppearance,
+        Decrease,
+        Increase
     ]
 );
 #[derive(Clone, PartialEq, Debug)]
@@ -60,6 +63,19 @@ enum Page {
     Generator,
     Discard,
 }
+
+/// Visual weight of a rendered button.
+#[derive(Clone, Copy, PartialEq)]
+pub enum ButtonKind {
+    /// Accent-filled call to action.
+    Primary,
+    /// Neutral fill with hairline border.
+    Secondary,
+    /// Borderless quiet label for inline field actions.
+    Ghost,
+    /// Error-tinted destructive action.
+    Danger,
+}
 enum Reply {
     Browse(Vec<EntryPreview>),
     Detail(Entry),
@@ -70,16 +86,94 @@ enum Reply {
     Biometric,
     Providers(Vec<vault::alias::AliasProviderInfo>, Option<String>),
 }
-const COMMANDS: [(&str, &str); 9] = [
-    ("generator", "Generate password"),
-    ("details", "View selected credential"),
-    ("new", "New credential"),
-    ("edit", "Edit selected credential"),
-    ("username", "Copy username"),
-    ("totp", "Copy TOTP"),
-    ("health", "Password health"),
-    ("settings", "Settings"),
-    ("lock", "Lock vault"),
+/// A command reachable from the Actions panel and, when `root`, from the root list.
+pub struct Command {
+    id: &'static str,
+    label: &'static str,
+    icon: ui::Icon,
+    /// Keystroke in GPUI syntax; `secondary` is Cmd on macOS and Ctrl elsewhere.
+    keys: Option<&'static str>,
+    root: bool,
+}
+const fn command(
+    id: &'static str,
+    label: &'static str,
+    icon: ui::Icon,
+    keys: Option<&'static str>,
+    root: bool,
+) -> Command {
+    Command {
+        id,
+        label,
+        icon,
+        keys,
+        root,
+    }
+}
+const COMMANDS: [Command; 9] = [
+    command(
+        "new",
+        "New credential",
+        ui::Icon::Plus,
+        Some("secondary-n"),
+        true,
+    ),
+    command(
+        "generator",
+        "Generate password",
+        ui::Icon::Dices,
+        None,
+        true,
+    ),
+    command(
+        "details",
+        "View selected credential",
+        ui::Icon::Eye,
+        None,
+        false,
+    ),
+    command(
+        "edit",
+        "Edit selected credential",
+        ui::Icon::Pencil,
+        Some("secondary-e"),
+        false,
+    ),
+    command(
+        "username",
+        "Copy username",
+        ui::Icon::User,
+        Some("secondary-shift-c"),
+        false,
+    ),
+    command(
+        "totp",
+        "Copy one-time code",
+        ui::Icon::Clock,
+        Some("secondary-t"),
+        false,
+    ),
+    command(
+        "health",
+        "Password health",
+        ui::Icon::ShieldCheck,
+        None,
+        true,
+    ),
+    command(
+        "settings",
+        "Settings",
+        ui::Icon::Settings,
+        Some("secondary-,"),
+        true,
+    ),
+    command(
+        "lock",
+        "Lock vault",
+        ui::Icon::Lock,
+        Some("secondary-l"),
+        true,
+    ),
 ];
 pub struct Latch {
     window: AnyWindowHandle,
@@ -90,6 +184,17 @@ pub struct Latch {
     query: Entity<TextInput>,
     action_query: Entity<TextInput>,
     focus: FocusHandle,
+    /// Stable focus handles for rows and buttons, keyed by element id, so a
+    /// focused control survives re-renders and can be found again.
+    stops: std::cell::RefCell<std::collections::HashMap<ElementId, FocusHandle>>,
+    /// Keyboard stops of the current page in render order; arrows walk them.
+    page_stops: std::cell::RefCell<Vec<FocusHandle>>,
+    /// The stop most recently scrolled into view, so wheel scrolling is not
+    /// undone while focus stays put.
+    revealed: std::rc::Rc<std::cell::RefCell<Option<FocusHandle>>>,
+    /// Page shown by the previous render; entering a page starts at its top.
+    shown: Page,
+    palette_scroll: ScrollHandle,
     previews: Vec<EntryPreview>,
     selected: usize,
     scroll: ScrollHandle,
@@ -124,7 +229,7 @@ impl Latch {
             Ok(None) => (Page::Setup, String::new(), false),
             Ok(Some(header)) if matches!(header.kdf.as_str(), "password-pbkdf2" | "argon2id") => (Page::Locked, String::new(), false),
             Ok(Some(header)) if header.kdf.starts_with("oauth-") => (Page::Locked, "This Google vault needs migration in the previous Latch app. Your vault has not been changed.".into(), true),
-            Ok(Some(header)) if header.kdf == "biometric-keychain" => (Page::Locked, "Unlock with your device key. You can switch to a master password after unlocking.".into(), !crate::biometric::supported()),
+            Ok(Some(header)) if header.kdf == "biometric-keychain" => (Page::Locked, String::new(), !crate::biometric::supported()),
             Ok(Some(_)) => (Page::Locked, "This vault needs a compatible Latch release. Your vault has not been changed.".into(), true),
             Err(error) => (Page::Locked, error, true),
         };
@@ -151,8 +256,8 @@ impl Latch {
             .ok()
             .and_then(|metadata| metadata.modified().ok());
         let query =
-            cx.new(|cx| TextInput::new("Search credentials or type > for commands", false, cx));
-        let action_query = cx.new(|cx| TextInput::new("Search actions", false, cx));
+            cx.new(|cx| TextInput::new("Search credentials and commands…", false, cx).bare());
+        let action_query = cx.new(|cx| TextInput::new("Search actions…", false, cx).bare());
         let mut this = Self {
             window: window.window_handle(),
             vault: Arc::new(Mutex::new(VaultCoordinator::new(
@@ -166,6 +271,11 @@ impl Latch {
             query,
             action_query,
             focus: cx.focus_handle(),
+            stops: Default::default(),
+            page_stops: Default::default(),
+            revealed: Default::default(),
+            shown: Page::Locked,
+            palette_scroll: ScrollHandle::new(),
             previews: vec![],
             selected: 0,
             scroll: ScrollHandle::new(),
@@ -260,7 +370,8 @@ impl Latch {
         cx: &mut Context<Self>,
     ) {
         match command {
-            "show" => {
+            "toggle" if window.is_window_active() => window.minimize_window(),
+            "show" | "toggle" => {
                 window.activate_window();
                 cx.activate(true);
                 self.focus_first(window, cx);
@@ -339,7 +450,7 @@ impl Latch {
                 match result {
                     Ok(Reply::Browse(entries)) => {
                         this.previews = entries;
-                        this.selected = this.selected.min(this.previews.len().saturating_sub(1));
+                        this.selected = this.selected.min(this.rows(cx).saturating_sub(1));
                         if matches!(this.page, Page::Locked | Page::Setup) {
                             this.page = Page::Browse;
                             this.fields.clear();
@@ -350,7 +461,7 @@ impl Latch {
                     }
                     Ok(Reply::Detail(entry)) => {
                         this.fields.clear();
-                        this.field("Password", true, cx);
+                        this.fields.push(cx.new(|cx| TextInput::new("Password", true, cx).bare()));
                         this.fields[0].update(cx, |field, cx| { field.set_value(entry.password.clone(), cx); field.read_only(); });
                         this.reveal_until = None;
                         this.detail = Some(entry);
@@ -420,14 +531,14 @@ impl Latch {
             })
         });
     }
-    fn import_appearance(&mut self, source: Source, cx: &mut Context<Self>) {
+    fn import_appearance(&mut self, cx: &mut Context<Self>) {
         let epoch = self.epoch.load(Ordering::SeqCst);
         let page = self.page.clone();
         let picker = cx.prompt_for_paths(PathPromptOptions {
             files: true,
             directories: false,
             multiple: false,
-            prompt: Some("Choose editor settings.json".into()),
+            prompt: Some("Choose a T3 Code, VS Code or Zed theme, or settings.json".into()),
         });
         cx.spawn(async move |view, cx| {
             let path = match picker.await {
@@ -437,18 +548,28 @@ impl Latch {
             let Some(path) = path else { return; };
             let result = cx.background_executor().spawn(async move {
                 let text = theme::read(&path)?;
-                Appearance::parse(&text, source)
+                // The file's own shape decides the format; the first that
+                // yields colors wins, otherwise the first parse error is shown.
+                let mut first_error = None;
+                for source in [Source::VsCode, Source::Zed] {
+                    match Appearance::parse(&text, source) {
+                        Ok(appearance) if [true, false].into_iter().any(|dark|
+                            appearance.palette(dark).is_ok_and(|(_, count)| count > 0)) => return Ok(Some(appearance)),
+                        Ok(_) => {}
+                        Err(error) => { first_error.get_or_insert(error); }
+                    }
+                }
+                first_error.map_or(Ok(None), Err)
             }).await;
             view.update(cx, |this, cx| {
                 if this.epoch.load(Ordering::SeqCst) != epoch || this.page != page { return; }
                 match result {
-                    Ok(appearance) if [true, false].into_iter().any(|dark|
-                        appearance.palette(dark).is_ok_and(|(_, count)| count > 0)) => {
+                    Ok(Some(appearance)) => {
                         this.preview = Some(appearance);
                         this.page = Page::Preview;
-                        this.notice = "Preview only. Apply saves explicit colors; a theme name cannot supply its palette.".into();
+                        this.notice = "Previewing. Press Enter to apply or Esc to cancel.".into();
                     }
-                    Ok(_) => this.notice = "No applicable color overrides. Existing appearance retained.".into(),
+                    Ok(None) => this.notice = "No colors Latch can use. Choose a T3 Code, VS Code or Zed theme file, or a settings.json with color overrides.".into(),
                     Err(error) => this.notice = error,
                 }
                 cx.notify();
@@ -664,6 +785,103 @@ impl Latch {
                     .map(|entry| entry.id.clone())
             })
     }
+    /// Credential rows visible in the root list; a `>` query lists commands only.
+    fn shown_previews(&self, cx: &App) -> usize {
+        if self.query.read(cx).value().starts_with('>') {
+            0
+        } else {
+            self.previews.len()
+        }
+    }
+    /// Root-list commands matching the query, shown after the credentials.
+    fn root_commands(&self, cx: &App) -> Vec<&'static Command> {
+        let query = self.query.read(cx).value();
+        let filter = query
+            .strip_prefix('>')
+            .unwrap_or(query)
+            .trim()
+            .to_lowercase();
+        COMMANDS
+            .iter()
+            .filter(|command| command.root && command.label.to_lowercase().contains(&filter))
+            .collect()
+    }
+    /// Selectable rows in the root list.
+    fn rows(&self, cx: &App) -> usize {
+        self.shown_previews(cx) + self.root_commands(cx).len()
+    }
+    /// The empty-vault notice occupies the first root-list child.
+    fn empty_vault(&self, cx: &App) -> bool {
+        self.previews.is_empty() && self.query.read(cx).value().is_empty()
+    }
+    fn move_selection(&mut self, step: isize, window: &mut Window, cx: &mut Context<Self>) {
+        match self.page {
+            Page::Actions => self.cycle_palette(window, cx, step),
+            Page::Browse => {
+                let last = self.rows(cx).saturating_sub(1);
+                self.selected = self.selected.saturating_add_signed(step).min(last);
+                let offset = usize::from(self.empty_vault(cx));
+                self.scroll.scroll_to_item(self.selected + offset);
+                cx.notify();
+            }
+            _ => {
+                let stops = self.page_stops.borrow().clone();
+                let Some(last) = stops.len().checked_sub(1) else {
+                    return;
+                };
+                let next = match stops
+                    .iter()
+                    .position(|stop| stop.contains_focused(window, cx))
+                {
+                    Some(current) => current.saturating_add_signed(step).min(last),
+                    None if step > 0 => 0,
+                    None => last,
+                };
+                if next == 0 {
+                    // The first stop shows the page from its top, headers included.
+                    self.scroll.set_offset(point(px(0.), px(0.)));
+                }
+                window.focus(&stops[next], cx);
+            }
+        }
+    }
+    /// Pages whose rows are the only actions: they open with the first row
+    /// focused, so Enter and arrows work immediately. Confirmations focus
+    /// Cancel first.
+    fn focus_lands_on_rows(&self) -> bool {
+        matches!(
+            self.page,
+            Page::Settings
+                | Page::Health
+                | Page::Providers
+                | Page::Appearance
+                | Page::Preview
+                | Page::Delete
+                | Page::Discard
+                | Page::DeleteProvider
+        )
+    }
+    fn resize_generated(&mut self, step: i32, cx: &mut Context<Self>) {
+        let length = &mut self.generator_options.length;
+        *length = length.saturating_add_signed(step).clamp(8, 128);
+        self.regenerate(cx);
+    }
+    fn apply_appearance(&mut self, cx: &mut Context<Self>) {
+        if let Some(preview) = self.preview.take() {
+            match preview.save(&self.appearance_directory) {
+                Ok(()) => {
+                    self.appearance = Some(preview);
+                    self.page = Page::Appearance;
+                    self.notice = "Appearance saved".into();
+                }
+                Err(error) => {
+                    self.preview = Some(preview);
+                    self.notice = error
+                }
+            }
+        }
+        cx.notify();
+    }
     fn open_actions(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let filter = self
             .query
@@ -676,8 +894,40 @@ impl Latch {
         self.action_query
             .update(cx, |query, cx| query.set_value(filter, cx));
         self.page = Page::Actions;
-        window.focus(&self.focus, cx);
+        // The palette owns the keyboard while it is open: typing filters it,
+        // and Tab cycles only its own stops.
+        window.focus(&self.action_query.read(cx).focus_handle(cx), cx);
         cx.notify();
+    }
+
+    /// Moves focus between the palette's own stops, wrapping within the
+    /// palette so obscured controls behind the scrim are unreachable.
+    fn cycle_palette(&mut self, window: &mut Window, cx: &mut Context<Self>, step: isize) {
+        let filter = self.action_query.read(cx).value().trim().to_lowercase();
+        let stops: Vec<FocusHandle> = std::iter::once(self.action_query.read(cx).focus_handle(cx))
+            .chain(
+                COMMANDS
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, command)| command.label.to_lowercase().contains(&filter))
+                    .map(|(index, _)| self.stop_handle(("palette", index).into(), cx)),
+            )
+            .collect();
+        let len = stops.len() as isize;
+        let index = match stops.iter().position(|handle| handle.is_focused(window)) {
+            Some(current) => (current as isize + step).rem_euclid(len) as usize,
+            None => 0,
+        };
+        window.focus(&stops[index], cx);
+        cx.notify();
+    }
+    /// The stable focus handle for an element id.
+    fn stop_handle(&self, id: ElementId, cx: &mut Context<Self>) -> FocusHandle {
+        self.stops
+            .borrow_mut()
+            .entry(id)
+            .or_insert_with(|| cx.focus_handle())
+            .clone()
     }
     fn run_command(&mut self, id: &str, window: &mut Window, cx: &mut Context<Self>) {
         match id {
@@ -894,10 +1144,11 @@ impl Latch {
                 });
             }
             Page::Browse => {
-                if self.query.read(cx).value().starts_with('>') {
-                    self.open_actions(window, cx);
-                } else {
+                let shown = self.shown_previews(cx);
+                if self.selected < shown {
                     self.copy_field("password", cx);
+                } else if let Some(command) = self.root_commands(cx).get(self.selected - shown) {
+                    self.run_command(command.id, window, cx);
                 }
             }
             Page::Delete => {
@@ -913,14 +1164,15 @@ impl Latch {
             Page::Details => self.copy_field("password", cx),
             Page::Actions => {
                 let filter = self.action_query.read(cx).value().trim().to_lowercase();
-                if let Some((id, _)) = COMMANDS
+                if let Some(command) = COMMANDS
                     .iter()
-                    .find(|(_, label)| label.to_lowercase().contains(&filter))
+                    .find(|command| command.label.to_lowercase().contains(&filter))
                 {
-                    self.run_command(id, window, cx);
+                    self.run_command(command.id, window, cx);
                 }
             }
             Page::Generator => self.use_generated(window, cx),
+            Page::Preview => self.apply_appearance(cx),
             Page::Discard => {
                 self.page = Page::Browse;
                 self.fields.clear();
@@ -970,8 +1222,17 @@ impl Latch {
             return;
         }
         if matches!(self.page, Page::Locked | Page::Setup) {
-            self.lock(window, cx);
-            cx.quit();
+            window.minimize_window();
+            return;
+        }
+        if self.page == Page::Browse {
+            if self.query.read(cx).value().is_empty() {
+                // Ctrl+Space brings Latch back; Ctrl+Q quits.
+                window.minimize_window();
+            } else {
+                self.query
+                    .update(cx, |query, cx| query.set_value(String::new(), cx));
+            }
             return;
         }
         if self.page == Page::Generator {
@@ -1001,6 +1262,20 @@ impl Latch {
         if matches!(self.page, Page::Preview | Page::Appearance) {
             self.preview = None;
             self.page = Page::Settings;
+            cx.notify();
+            return;
+        }
+        // Settings subpages return one level up instead of to the root list.
+        let parent = match self.page {
+            Page::Providers | Page::Rotate => Some(Page::Settings),
+            Page::Provider | Page::DeleteProvider => Some(Page::Providers),
+            _ => None,
+        };
+        if let Some(parent) = parent {
+            self.fields.clear();
+            self.notice.clear();
+            self.page = parent;
+            window.focus(&self.focus, cx);
             cx.notify();
             return;
         }
@@ -1266,29 +1541,73 @@ impl Latch {
     }
     fn button(
         &self,
-        id: &'static str,
-        label: &'static str,
+        id: impl Into<ElementId>,
+        icon: Option<ui::Icon>,
+        label: impl Into<SharedString>,
+        kind: ButtonKind,
         action: impl Fn(&mut Self, &mut Window, &mut Context<Self>) + 'static,
         cx: &mut Context<Self>,
-    ) -> impl IntoElement {
-        let palette = cx.global::<Palette>();
-        let border = palette.color(Color::Border);
-        let hover = palette.color(Color::ButtonHover);
+    ) -> gpui_kit::base::Button {
+        let palette = cx.global::<Palette>().clone();
+        let label = label.into();
+        let (background, hover, text, border) = match kind {
+            ButtonKind::Primary => (
+                palette.color(Color::Button),
+                palette.color(Color::ButtonHover),
+                palette.color(Color::ButtonText),
+                gpui_kit::transparent_black(),
+            ),
+            ButtonKind::Secondary => (
+                ui::wash(&palette, 0.05),
+                ui::wash(&palette, 0.09),
+                palette.color(Color::Text),
+                palette.color(Color::Border),
+            ),
+            ButtonKind::Ghost => (
+                gpui_kit::transparent_black(),
+                ui::wash(&palette, 0.07),
+                palette.color(Color::Muted),
+                gpui_kit::transparent_black(),
+            ),
+            ButtonKind::Danger => (
+                palette.color(Color::Error).opacity(0.12),
+                palette.color(Color::Error).opacity(0.2),
+                palette.color(Color::Error),
+                palette.color(Color::Error).opacity(0.3),
+            ),
+        };
         let focus = palette.color(Color::Focus);
+        let action = std::rc::Rc::new(action);
+        let id = id.into();
+        let stop = self.stop(&id, cx);
         gpui_kit::base::Button::new(id)
-            .accessibility_label(label)
+            .track_focus(&stop)
+            .relative()
+            .child(self.reveal(stop))
+            .accessibility_label(label.clone())
             .disabled(self.busy)
-            .px_3()
-            .py_2()
-            .rounded_md()
+            .h(px(28.))
+            .px(px(12.))
+            .gap(px(6.))
+            .rounded(px(ui::RADIUS - 2.))
             .border_1()
             .border_color(border)
-            .bg(palette.color(Color::Button))
-            .text_color(palette.color(Color::ButtonText))
+            .bg(background)
+            .text_color(text)
+            .text_size(px(ui::TEXT_SM + 0.5))
+            .line_height(px(18.))
+            .font_weight(FontWeight::MEDIUM)
             .cursor_pointer()
             .hover(move |style| style.bg(hover))
+            .active(move |style| style.opacity(0.85))
+            .styles(|s| s.disabled(|style| style.opacity(0.45)))
             .focus(move |style| style.border_color(focus))
+            .on_action(cx.listener({
+                let action = action.clone();
+                move |this, _: &Submit, window, cx| action(this, window, cx)
+            }))
             .on_click(cx.listener(move |this, _, window, cx| action(this, window, cx)))
+            .when_some(icon, |button, icon| button.child(icon))
             .child(label)
     }
 }
@@ -1301,6 +1620,8 @@ pub fn init(cx: &mut App) {
         KeyBinding::new("down", Next, Some("Latch")),
         KeyBinding::new("up", Previous, Some("Latch")),
         KeyBinding::new("tab", Tab, Some("Latch")),
+        KeyBinding::new("left", Decrease, Some("Latch")),
+        KeyBinding::new("right", Increase, Some("Latch")),
         KeyBinding::new("shift-tab", TabPrevious, Some("Latch")),
         KeyBinding::new("ctrl-n", Add, Some("Latch")),
         KeyBinding::new("cmd-n", Add, Some("Latch")),
@@ -1446,10 +1767,14 @@ mod tests {
         cx.simulate_keystrokes("ctrl-k");
         cx.update(|window, cx| {
             assert!(view.read(cx).page == Page::Actions);
-            window.draw(cx).clear(cx);
-        });
-        cx.simulate_keystrokes("tab");
-        cx.update(|window, cx| {
+            // The palette opens with its filter focused and owns the keyboard.
+            view.read(cx)
+                .action_query
+                .read(cx)
+                .focus_handle(cx)
+                .is_focused(window)
+                .then_some(())
+                .expect("palette filter should be focused on open");
             window.draw(cx).clear(cx);
         });
         cx.simulate_keystrokes("tab");
@@ -1465,11 +1790,7 @@ mod tests {
         cx.simulate_event(gpui_kit::KeyUpEvent { keystroke });
         cx.run_until_parked();
         cx.update(|_, cx| {
-            assert!(
-                view.read(cx).page == Page::Generator,
-                "{:?}",
-                view.read(cx).page
-            );
+            assert!(view.read(cx).page == Page::Edit, "{:?}", view.read(cx).page);
         });
         cx.update(|window, cx| {
             view.update(cx, |this, cx| {
@@ -1612,5 +1933,115 @@ mod tests {
                 .unwrap()
                 .contains("credential secret")
         );
+    }
+}
+#[cfg(test)]
+mod tab_order {
+    use super::Latch;
+    use gpui_kit::{Focusable, TestAppContext};
+    use latch_core::vault::storage::VaultStorage;
+
+    #[gpui_kit::test]
+    fn tab_reaches_every_setup_field(cx: &mut TestAppContext) {
+        let directory = tempfile::tempdir().unwrap();
+        cx.update(|cx| {
+            gpui_kit::init(cx);
+            super::init(cx);
+            crate::input::init(cx);
+        });
+        let (view, cx) = cx.add_window_view(|window, cx| {
+            Latch::new(
+                VaultStorage {
+                    path: directory.path().join("vault.enc"),
+                },
+                window,
+                cx,
+            )
+        });
+        cx.update(|window, cx| window.draw(cx).clear(cx));
+        cx.simulate_keystrokes("tab");
+        cx.update(|window, cx| {
+            let confirm = view.read(cx).fields[1].read(cx).focus_handle(cx);
+            assert!(
+                confirm.is_focused(window),
+                "Tab must move to the confirm field"
+            );
+        });
+    }
+}
+
+#[cfg(test)]
+mod keyboard {
+    use super::{Latch, Page, Submit};
+    use gpui_kit::{Focusable, TestAppContext};
+    use latch_core::vault::storage::VaultStorage;
+
+    #[gpui_kit::test]
+    fn list_pages_and_confirmations_are_keyboard_first(cx: &mut TestAppContext) {
+        let directory = tempfile::tempdir().unwrap();
+        cx.update(|cx| {
+            gpui_kit::init(cx);
+            super::init(cx);
+            crate::input::init(cx);
+        });
+        let (view, cx) = cx.add_window_view(|window, cx| {
+            Latch::new(
+                VaultStorage {
+                    path: directory.path().join("vault.enc"),
+                },
+                window,
+                cx,
+            )
+        });
+        cx.update(|window, cx| {
+            view.update(cx, |this, cx| {
+                for field in &this.fields {
+                    field.update(cx, |field, cx| {
+                        field.set_value("a long test master password".into(), cx)
+                    });
+                }
+                this.submit(&Submit, window, cx);
+            })
+        });
+        cx.run_until_parked();
+        cx.simulate_keystrokes("ctrl-,");
+        cx.update(|window, cx| window.draw(cx).clear(cx));
+        let focused_stop = |cx: &mut gpui_kit::VisualTestContext| {
+            cx.update(|window, cx| {
+                view.read(cx)
+                    .page_stops
+                    .borrow()
+                    .iter()
+                    .position(|stop| stop.is_focused(window))
+            })
+        };
+        assert_eq!(focused_stop(cx), Some(0), "settings opens on its first row");
+        cx.simulate_keystrokes("down down");
+        cx.update(|window, cx| window.draw(cx).clear(cx));
+        assert_eq!(focused_stop(cx), Some(2), "arrows walk the page's rows");
+
+        cx.simulate_keystrokes("escape");
+        cx.run_until_parked();
+        cx.simulate_keystrokes("ctrl-n");
+        cx.update(|window, cx| {
+            view.update(cx, |this, cx| {
+                this.fields[0].update(cx, |field, cx| field.set_value("Draft".into(), cx))
+            });
+            window.draw(cx).clear(cx);
+        });
+        cx.simulate_keystrokes("escape");
+        cx.update(|window, cx| window.draw(cx).clear(cx));
+        cx.update(|_, cx| assert!(view.read(cx).page == Page::Discard));
+        cx.simulate_keystrokes("enter");
+        cx.run_until_parked();
+        cx.update(|window, cx| {
+            let this = view.read(cx);
+            assert!(
+                this.page == Page::Edit,
+                "Enter on a confirmation hits Cancel first"
+            );
+            assert_eq!(this.fields[0].read(cx).value(), "Draft");
+            assert!(this.fields[0].read(cx).focus_handle(cx).is_focused(window));
+        });
     }
 }
