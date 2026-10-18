@@ -1230,6 +1230,7 @@ impl Latch {
             Page::Discard => {
                 self.page = Page::Browse;
                 self.fields.clear();
+                self.detail = None;
                 self.editing = None;
                 self.draft_alias_provider = None;
                 window.focus(&self.query.read(cx).focus_handle(cx), cx);
@@ -1583,6 +1584,7 @@ impl Latch {
         }
         let password = self.generated.to_string();
         if self.generator_return != Page::Edit {
+            self.detail = None;
             self.editing = None;
             self.form(None, window, cx);
         } else {
@@ -2116,6 +2118,98 @@ mod tests {
                 .unwrap()
                 .contains("credential secret")
         );
+    }
+
+    #[gpui_kit::test]
+    fn discarding_a_generated_draft_forgets_the_opened_credential(cx: &mut TestAppContext) {
+        let directory = tempfile::tempdir().unwrap();
+        cx.update(|cx| {
+            gpui_kit::init(cx);
+            super::init(cx);
+            crate::input::init(cx);
+        });
+        let window = cx.add_window(|window, cx| {
+            Latch::new(
+                VaultStorage {
+                    path: directory.path().join("vault.enc"),
+                },
+                window,
+                cx,
+            )
+        });
+        window
+            .update(cx, |this, window, cx| {
+                for field in &this.fields {
+                    field.update(cx, |field, cx| {
+                        field.set_value("a long test master password".into(), cx)
+                    });
+                }
+                this.submit(&Submit, window, cx);
+            })
+            .unwrap();
+        cx.run_until_parked();
+        for title in ["Alpha", "Bravo"] {
+            window
+                .update(cx, |this, window, cx| {
+                    this.add(window, cx);
+                    for (field, value) in this.fields.iter().zip([
+                        title.to_owned(),
+                        "person@example.com".into(),
+                        format!("{title} secret"),
+                    ]) {
+                        field.update(cx, |field, cx| field.set_value(value, cx));
+                    }
+                    this.submit(&Submit, window, cx);
+                })
+                .unwrap();
+            cx.run_until_parked();
+            window
+                .update(cx, |this, _, _| {
+                    assert!(this.page == Page::Browse, "{}", this.notice)
+                })
+                .unwrap();
+        }
+        let index = |this: &Latch, title: &str| {
+            this.previews
+                .iter()
+                .position(|entry| entry.title == title)
+                .unwrap()
+        };
+        window
+            .update(cx, |this, window, cx| {
+                this.selected = index(this, "Alpha");
+                this.run_command("details", window, cx);
+            })
+            .unwrap();
+        cx.run_until_parked();
+        window
+            .update(cx, |this, window, cx| {
+                assert!(this.page == Page::Details, "{}", this.notice);
+                this.run_command("generator", window, cx);
+                this.submit(&Submit, window, cx);
+                assert!(this.page == Page::Edit);
+                this.back(&super::Back, window, cx);
+                assert!(this.page == Page::Discard);
+                this.submit(&Submit, window, cx);
+            })
+            .unwrap();
+        cx.run_until_parked();
+        window
+            .update(cx, |this, window, cx| {
+                assert!(this.page == Page::Browse);
+                this.selected = index(this, "Bravo");
+                this.submit(&Submit, window, cx);
+            })
+            .unwrap();
+        cx.run_until_parked();
+        cx.update(|cx| {
+            assert_eq!(
+                cx.read_from_clipboard()
+                    .and_then(|item| item.text())
+                    .as_deref(),
+                Some("Bravo secret")
+            );
+        });
     }
 }
 #[cfg(test)]

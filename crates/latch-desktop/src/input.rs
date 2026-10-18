@@ -221,7 +221,15 @@ impl TextInput {
     }
 
     fn paste(&mut self, _: &Paste, _: &mut Window, cx: &mut Context<Self>) {
-        if let Some(text) = cx.read_from_clipboard().and_then(|item| item.text()) {
+        let Some(text) = cx.read_from_clipboard().and_then(|item| item.text()) else {
+            return;
+        };
+        let text = Zeroizing::new(text);
+        if self.secret {
+            // Secrets paste verbatim, tabs included; replace() refuses line
+            // breaks rather than silently rewriting them.
+            self.insert_verbatim(None, &text, cx);
+        } else {
             self.insert_text(None, &text.replace("\n", " "), cx);
         }
     }
@@ -249,12 +257,6 @@ impl TextInput {
         new_text: &str,
         cx: &mut Context<Self>,
     ) {
-        let range = range_utf16
-            .as_ref()
-            .map(|range_utf16| self.range_from_utf16(range_utf16))
-            .or(self.marked_range.clone())
-            .unwrap_or(self.selected_range.clone());
-
         // Ctrl chords such as Ctrl+K can also deliver their control character;
         // a single-line field drops it instead of replacing the selection.
         let filtered = Zeroizing::new(
@@ -266,7 +268,20 @@ impl TextInput {
         if filtered.is_empty() && !new_text.is_empty() {
             return;
         }
-        let new_text = filtered.as_str();
+        self.insert_verbatim(range_utf16, &filtered, cx);
+    }
+
+    fn insert_verbatim(
+        &mut self,
+        range_utf16: Option<Range<usize>>,
+        new_text: &str,
+        cx: &mut Context<Self>,
+    ) {
+        let range = range_utf16
+            .as_ref()
+            .map(|range_utf16| self.range_from_utf16(range_utf16))
+            .or(self.marked_range.clone())
+            .unwrap_or(self.selected_range.clone());
         if !self.replace(range.clone(), new_text) {
             return;
         }
@@ -865,6 +880,26 @@ mod tests {
                 input.set_value(String::new(), cx);
                 assert!(!input.composing());
                 assert!(input.value().is_empty());
+            })
+            .unwrap();
+    }
+
+    #[gpui_kit::test]
+    fn pasting_a_secret_keeps_it_exact(cx: &mut gpui_kit::TestAppContext) {
+        cx.update(|cx| cx.set_global(Palette::fallback(true)));
+        let window = cx.add_window(|_, cx| TextInput::new("Password", true, cx));
+        window
+            .update(cx, |input, window, cx| {
+                cx.write_to_clipboard(ClipboardItem::new_string("pass\tword".into()));
+                input.paste(&Paste, window, cx);
+                assert_eq!(input.value(), "pass\tword");
+                cx.write_to_clipboard(ClipboardItem::new_string("password\n".into()));
+                input.paste(&Paste, window, cx);
+                assert_eq!(
+                    input.value(),
+                    "pass\tword",
+                    "a line break is refused, not rewritten"
+                );
             })
             .unwrap();
     }
