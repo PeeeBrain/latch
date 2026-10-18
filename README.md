@@ -1,130 +1,103 @@
 # Latch Password Manager
 
-A local password manager with a compact Raycast-style interface, being rebuilt in Rust and GPUI for Windows, macOS, and Linux.
+A local password manager with a compact, keyboard-first GPUI interface for Windows, macOS, and Linux.
 
-The GPUI rebuild is in progress. `crates/latch-core` now contains the shared vault logic;
-`crates/latch-desktop` implements the native application. The temporary Tauri host keeps legacy
-Google access for migration, while the native dependency graph excludes it. The native
-application supports password setup/unlock, credential search/add/edit/delete, timed reveal,
-copy, TOTP, password generation, email aliases, health checks, auth rotation, and editor-settings
-color import. Tray, global shortcut, and signed updater integration are implemented; actual
-platform, signing, installer, and upgrade acceptance remain open. See [the implementation plan](docs/plans/gpui-rebuild.md).
+The native Rust rewrite is in progress. Vault flows are implemented, but signing, installed-app upgrades, accessibility, and platform acceptance still need validation. See the [implementation plan](docs/plans/gpui-rebuild.md) for progress and release gates.
 
-## Temporary migration-host architecture
+## Run in development
 
-```mermaid
-graph TD
-    FE[TypeScript / React<br/>Command Palette UI]
-    CM[Tauri Commands<br/>vault · session · credential · generator · health]
-    AU[Auth<br/>Password · OAuth · Biometric · Lockout]
-    VA[Vault<br/>Provision · Access · Rotate · Workspace · Storage]
-    CR[Crypto<br/>AES-256-GCM]
-    VH[Vault Health<br/>Weak · Reused · Breached via HIBP]
-    PG[Password Generator<br/>zxcvbn]
-    OS[(OS Config Dir)]
+The native app runs from the repository root. It does not need Bun, React, a web server, or a WebView.
 
-    FE --> CM
-    CM --> AU & VA & CR & VH & PG
-    AU --> CR
-    VA --> CR & VA -->|vault.enc| OS
+Install Rust through rustup. The repository's `rust-toolchain.toml` selects Rust 1.98.1 with rustfmt and Clippy. Windows needs the MSVC C++ build tools and Windows SDK; macOS needs the Xcode command line tools. Linux needs the GPUI and GTK development packages listed in the native job in [ci.yml](.github/workflows/ci.yml).
 
-    style FE fill:#90caf9,color:#000000
-    style CM fill:#ffcc80,color:#000000
-    style AU fill:#cfd8dc,color:#000000
-    style VA fill:#cfd8dc,color:#000000
-    style CR fill:#cfd8dc,color:#000000
-    style VH fill:#cfd8dc,color:#000000
-    style PG fill:#ffcc80,color:#000000
+```sh
+cargo run -p latch-desktop --locked
 ```
 
-## Features
+This compiles and launches the current source in debug mode. Restart the command after changing Rust code. Launching an existing executable in `target/debug/` does not recompile it.
 
-- **Native access**: Master password; Windows Hello/macOS Keychain device keys on supported devices. Google access exists only in the temporary migration host.
-- **Command Palette UI**: Raycast-style single-window interface with keyboard navigation
-- **Password Generator**: Configurable passwords with zxcvbn strength analysis
-- **Vault Health Dashboard**: Detects weak, reused, and breached credentials via HIBP k-anonymity API
-- **Session Management**: 30-minute auto-lock with clipboard auto-clear
-- **Vault Migration**: Re-encrypt between auth methods without losing credentials
-- **Lockout Protection**: Exponential backoff on failed auth attempts (5s → 5min max)
-- **Zero-Knowledge**: Master password never stored, session key in memory only
-- **Cross-Platform**: Windows, macOS, Linux — identical vault file format
-- **Appearance**: Import explicit VS Code/Zed settings.json color overrides, preview/apply, edit, reload, and reset; no native theme presets.
-- **Updates**: Native signed updater uses a separate feed; review packages are not published to the legacy feed.
+By default, development uses your normal vault. Close any other Latch host using that vault first; both the native app and the temporary migration host take an exclusive lock.
 
-## Prerequisites
+For UI work with a separate vault, set `LATCH_DEV_VAULT` to a throwaway file path. Create its parent directory before launching. In PowerShell:
 
-- **Bun** (only for the temporary migration frontend)
-- **Rust + Cargo** (stable, with `rustfmt` and `clippy`)
-- **GPUI/platform dependencies**: Linux packages are listed in `.github/workflows/ci.yml`; migration-host prerequisites remain in [Tauri docs](https://v2.tauri.app/start/prerequisites/).
-
-## Development
-
-For a user-run native development launch, run `cargo run -p latch-desktop` from the repository root. This recompiles the changed source; launching an older `target/debug/latch-desktop.exe` will show its old UI. Close the migration host first: both current hosts take an exclusive vault lock.
-
-PR CI also uploads `gpui-preview-<OS>-<architecture>` artifacts containing the new release-mode executable. Download the artifact matching your platform from its completed CI run, extract it, and launch `latch-desktop.exe` on Windows or `latch-desktop` on macOS/Linux. These previews use the existing vault location and are not signed installers. Windows debug binaries refer to shader files in the machine's Cargo registry and must be launched on their build machine; portable previews therefore use release mode, which embeds the shaders.
-
-On macOS/Linux, restore the artifact's executable permission with `chmod +x latch-desktop` before launching. Linux closes by quitting; tray creation alone cannot establish that a desktop exposes the icon. Windows/macOS close to the tray with a locked vault when tray initialization succeeds.
-
-The Native GPUI packages workflow also uploads `native-<OS>-<architecture>` installer artifacts when packaging changes. These include Windows NSIS, macOS app/DMG, and Linux deb/AppImage. The deb targets Ubuntu 24.04; AppImage needs the host's Wayland and GPU drivers. Signing and installed-app upgrade acceptance remain release gates.
-
-Agents must follow the repository's no-local-build policy and use check/test commands. A user-run launch and CI-produced packages supply the native runtime checks.
-
-The migration frontend uses `frontend` and `bun run tauri dev`. Existing Google vaults must unlock there and use Settings → Switch to master password before opening native Latch.
-
-## Building
-
-Builds and releases are handled by GitHub Actions CI. See `.github/workflows/release.yml`.
-
-## Project Structure
-
-```
-frontend/          # Tauri v2 + React + TypeScript (api/, components/, hooks/, utils/)
-frontend/src-tauri/ # Temporary Tauri host and command wrappers
-crates/latch-core/  # Shared auth, crypto, vault, generator, and health code
-crates/latch-desktop/ # Native GPUI host, without the styled component/theme layer
-Cargo.lock         # Shared application lockfile
-docs/adr/          # Architecture Decision Records
+```powershell
+$env:LATCH_DEV_VAULT = Join-Path $env:TEMP 'latch-dev/vault.enc'
+New-Item -ItemType Directory -Force (Split-Path $env:LATCH_DEV_VAULT) | Out-Null
+cargo run -p latch-desktop --locked
 ```
 
-## Security
+On macOS/Linux:
 
-### Encryption & Key Derivation
-- **Password Auth**: PBKDF2-HMAC-SHA256, 100,000 iterations
-- **Historical compatibility**: Native reads the original password Argon2id format; legacy OAuth readers remain confined to the migration bridge.
-- **Encryption**: AES-256-GCM with random 12-byte nonce
-- **KDF-per-AuthMethod**: Each auth method uses a tailored KDF (see ADR-0002)
-
-### Session Management
-- Vault auto-locks after 30 minutes of inactivity
-- Session key (`Zeroizing`) stored in memory only — cleared on lock
-- Clipboard auto-clears 30 seconds after copy
-
-### Important Notes
-- **No Password Recovery**: Forgotten master password = lost data (by design)
-- **Cross-Platform**: Vault file format identical across all platforms
-
-## Troubleshooting
-
-- **Vault not opening?** Check you're using the correct auth method and credentials.
-- **Frontend not building?** Ensure you have the project Bun version installed.
-- **Tauri build failing?** Check missing system dependencies (e.g. `libwebkit2gtk-4.0-dev` on Linux).
-
-## Contributing
-
-Contributions are welcome! See [CONTRIBUTING.md](CONTRIBUTING.md) and [AGENTS.md](AGENTS.md) for development guidelines.
-
-Before opening a PR, run the CI checks locally:
-```bash
-# Backend
-cd frontend/src-tauri && cargo fmt --all && cargo check && cargo clippy --all-targets --all-features -- -D warnings && cargo test
-
-# Frontend
-cd frontend && bun run typecheck
+```sh
+mkdir -p /tmp/latch-dev
+LATCH_DEV_VAULT=/tmp/latch-dev/vault.enc cargo run -p latch-desktop --locked
 ```
 
-From the repository root, also run native checks:
+The override works only in debug builds. A missing vault starts setup. Appearance settings also live beside the selected vault. In PowerShell, remove the override with `Remove-Item Env:LATCH_DEV_VAULT` before returning to your normal vault.
 
-```bash
+These launch commands are for developers to run. Agents must follow the [no-local-build policy](AGENTS.md), use check/test commands, and use CI artifacts for runtime validation.
+
+## How the app works
+
+Latch opens one command window. Create or unlock a vault, then type to filter credentials and commands. Search, credential editing, password generation, health checks, and settings all stay inside this window. The footer names the current Enter action; the Actions panel provides commands for the selected credential.
+
+- Press Up/Down to navigate and Enter to copy the selected credential's password or run a selected command.
+- Open Actions with Ctrl+K, or Cmd+K on macOS, to view details, edit, or copy other fields.
+- Use Ctrl+N to add a credential, Ctrl+E to edit, Ctrl+L to lock, and Ctrl+, to open settings. Use Cmd for these shortcuts on macOS.
+- Press Escape to go back and Tab/Shift+Tab to move between controls.
+- Ctrl+Space shows or hides Latch on all platforms when global shortcut registration succeeds.
+
+Native access supports a master password and device-key access through Windows Hello or macOS Keychain on supported devices. The app also provides timed password reveal, TOTP codes, configurable password generation, SimpleLogin/DuckDuckGo aliases, local password health checks, optional HIBP breach checks, and password/device-key rotation.
+
+The vault locks after 30 minutes of inactivity. Copied secrets clear after 30 seconds if Latch still owns that clipboard content. On Windows/macOS, closing the window locks the vault and hides it to the tray when tray initialization succeeds. On Linux, closing quits the app.
+
+## Appearance
+
+Open Settings, then Appearance to import a T3 Code, VS Code, or Zed theme, or editor `settings.json` color overrides. Latch keeps supported colors, previews them before applying, and converts imported themes into editor settings. Light/dark variants follow the OS appearance.
+
+You can open, edit, reload, or reset Latch's appearance `settings.json` from the app. It lives beside the vault. There is no preset theme gallery or separate public Latch theme format. Ctrl+Alt+R or Cmd+Alt+R resets appearance if custom colors make the interface hard to read.
+
+## Architecture and storage
+
+`crates/latch-desktop` owns the GPUI window, Rust text input, clipboard, tray, global shortcut, platform device-key integration, and signed updater. It uses GPUI Kit's component layer for the title bar and shortcut formatting, with embedded Lucide icons.
+
+`crates/latch-core` owns authentication, encryption, vault storage, the unlocked workspace, search, password generation, aliases, and health checks. The root Cargo workspace owns the toolchain, lockfile, and target directory.
+
+The encrypted vault file is `vault.enc` in the OS configuration directory:
+
+- Windows: `%APPDATA%\Latch\vault.enc`
+- macOS: `~/Library/Application Support/Latch/vault.enc`
+- Linux: `$XDG_CONFIG_HOME/latch/vault.enc`, defaulting to `~/.config/latch/vault.enc`
+
+The file format is shared across platforms. Password vaults use PBKDF2-HMAC-SHA256 with 100,000 iterations and AES-256-GCM encryption. Native also reads historical Argon2id password vaults. Device-key vaults use platform key storage. The unlocked session key stays in memory and clears on lock. There is no master-password recovery.
+
+## Existing Google vaults
+
+Google OAuth is retired in the native app. It detects an OAuth vault and leaves it unchanged. Before using native Latch, unlock the vault in the temporary Tauri migration host and choose Settings > Switch to master password.
+
+The migration host remains in `frontend/` and `frontend/src-tauri/`. It requires Bun 1.4.2, the repository Rust toolchain, and Tauri platform prerequisites. To launch it:
+
+```sh
+cd frontend
+bun install
+bun run tauri dev
+```
+
+Close it before opening the same vault in the native app. Only the migration host enables `latch-core/legacy-oauth`; the native dependency graph excludes Tauri and Google/JWT processing.
+
+## CI previews and packages
+
+Pull-request CI uploads `gpui-preview-<OS>-<architecture>` artifacts with a release-mode executable. Download and extract the artifact for your platform, then launch `latch-desktop.exe` on Windows or `latch-desktop` on macOS/Linux. These previews use your normal vault location and are not signed installers.
+
+On macOS/Linux, restore executable permission with `chmod +x latch-desktop`. Windows debug executables depend on shader files on their build machine; CI release previews embed those shaders and are portable.
+
+The Native GPUI packages workflow uploads `native-<OS>-<architecture>` artifacts containing Windows NSIS, macOS app/DMG, and Linux deb/AppImage packages. The deb targets Ubuntu 24.04; AppImage needs the host's Wayland and GPU drivers. Signing and installed-app upgrade acceptance remain release gates. The native signed updater uses a separate feed from the migration app.
+
+## Contributing and checks
+
+See [AGENTS.md](AGENTS.md) for repository policies and [CONTRIBUTING.md](CONTRIBUTING.md) for contribution guidance. From the repository root, run:
+
+```sh
 cargo fmt --all -- --check
 cargo check -p latch-desktop --all-targets --locked
 cargo test -p latch-core --locked
@@ -133,16 +106,15 @@ cargo test -p latch-desktop --locked
 cargo clippy -p latch-core -p latch-desktop --all-targets --locked -- -D warnings
 ```
 
-Local builds remain prohibited by `AGENTS.md`. Native launch, GPU, accessibility,
-and installer validation require CI-produced artifacts and real platform checks.
+Do not use `--workspace --all-features` to verify native OAuth removal; that enables the migration host's legacy feature. Migration-host and frontend changes also need the checks listed in AGENTS.md. Builds and packaging run in GitHub Actions. Native launch, GPU, accessibility, and installer validation need runtime checks on each supported platform.
 
-## Acknowledgments
+## Troubleshooting
 
-- Native UI built with [GPUI Kit](https://gpui.rs); temporary migration host uses Tauri and React
-- Cryptographic functions powered by `aes-gcm`, `argon2`, and `pbkdf2`
-- Password strength via `zxcvbn`
-- Breach checking via [Have I Been Pwned](https://haveibeenpwned.com) k-anonymity API
+- An old interface usually means an old executable is running. Close it and restart with `cargo run -p latch-desktop --locked`.
+- If another process holds the vault lock, close the other Latch host or choose a separate development vault.
+- If Ctrl+Space is unavailable, another application or the desktop environment may own it. Open Latch from the application launcher.
+- A Google vault requires migration through the temporary host. A damaged or unsupported vault is preserved rather than replaced with an empty one.
 
 ## License
 
-MIT — see [LICENSE](LICENSE).
+MIT. See [LICENSE](LICENSE).

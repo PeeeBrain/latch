@@ -136,7 +136,7 @@ The shell's identity comes from typography, spacing, separators, and concise tas
 
 Before implementing all task views, create a disposable interaction prototype for: unlock/copy; add with generator and alias; edit with validation; security issue → edit → return; import → preview → apply → recover; and expiry during a draft. Walk these tasks with keyboard-only users, then validate actual GPUI input and screen-reader behavior on Windows, macOS, and Linux. Compare completion time, errors, discoverability of Actions, and retained task context with the old app; do not preserve a legacy flow merely because a test names its old mode. These are planned checks, not research results already measured.
 
-At implementation time, update `PRODUCT.md` to remove the superseded preset-gallery/Win98 assumptions and record this compact direction. Write the chosen component and interaction rules after the prototype. The current product notes are useful context, not authority to keep themes the user has explicitly removed.
+The superseded product notes have been removed. The README documents the current compact interaction model and appearance workflow; record detailed implementation decisions here as the rewrite progresses.
 
 ## GPUI feasibility and dependency choice
 
