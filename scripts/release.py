@@ -53,14 +53,26 @@ def asset_name(release_version, platform, suffix):
 
 
 def write_release_notes(output, repository, tag):
-    previous = subprocess.run(
-        ["git", "describe", "--tags", "--abbrev=0", f"{tag}^"],
-        cwd=ROOT, text=True, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
-        check=False,
-    )
+    tags = subprocess.run(
+        ["git", "tag", "--list"], cwd=ROOT, text=True,
+        stdout=subprocess.PIPE, check=True,
+    ).stdout.splitlines()
+    matches = []
+    for candidate in tags:
+        if re.fullmatch(r"v(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)", candidate):
+            matches.extend(["--match", candidate])
+    previous_tag = None
+    if matches:
+        previous = subprocess.run(
+            ["git", "describe", "--tags", "--abbrev=0", *matches, f"{tag}^"],
+            cwd=ROOT, text=True, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+            check=False,
+        )
+        if previous.returncode == 0:
+            previous_tag = previous.stdout.strip()
     command = ["gh", "api", f"repos/{repository}/releases/generate-notes", "-f", f"tag_name={tag}"]
-    if previous.returncode == 0:
-        command.extend(["-f", f"previous_tag_name={previous.stdout.strip()}"])
+    if previous_tag is not None:
+        command.extend(["-f", f"previous_tag_name={previous_tag}"])
     command.extend(["--jq", ".body"])
     changelog = subprocess.check_output(command, text=True)
     instructions = (ROOT / "docs/release-notes.md").read_text(encoding="utf-8")

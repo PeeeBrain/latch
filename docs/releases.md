@@ -26,7 +26,7 @@ The existing `TAURI_SIGNING_PRIVATE_KEY` and `TAURI_SIGNING_PRIVATE_KEY_PASSWORD
 
 Publication waits for every target. The release script requires every download and signature, verifies all signatures with Minisign against `crates/latch-desktop/updater.pub`, and creates `SHA256SUMS` and `native-latest.json`. A missing asset, missing signature, wrong key, or changed payload stops publication. Asset names include version, OS, and architecture.
 
-The workflow generates release notes through GitHub's API from the previous reachable tag, listing merged pull requests, authors, and a full changelog comparison link. If there is no previous tag, GitHub generates notes from the full history. Installation and migration instructions from `docs/release-notes.md` follow the generated changelog.
+The workflow generates release notes through GitHub's API from the previous reachable stable `vMAJOR.MINOR.PATCH` tag, listing merged pull requests, authors, and a full changelog comparison link. Prereleases and unrelated or malformed tags are ignored. If there is no previous stable tag, GitHub generates notes from the full history. Installation and migration instructions from `docs/release-notes.md` follow the generated changelog.
 
 The workflow uploads the complete set to a draft release, then publishes it as latest. Failed draft uploads can be retried. Published releases are never overwritten. Only one release version should be in flight at a time.
 

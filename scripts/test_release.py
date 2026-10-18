@@ -24,6 +24,8 @@ class ReleaseTests(unittest.TestCase):
 
     def test_release_notes_select_previous_tag_and_append_installation_notes(self):
         self.git("init", "-b", "main")
+        self.git("-c", "user.name=Test", "-c", "user.email=test@example.com", "commit", "--allow-empty", "-m", "unreleased")
+        self.git("tag", "build-marker")
         (self.root / "docs").mkdir()
         instructions = "## Install\nKeep your vault backup.\n"
         (self.root / "docs/release-notes.md").write_text(instructions, encoding="utf-8")
@@ -31,6 +33,10 @@ class ReleaseTests(unittest.TestCase):
         changelog = "## What's Changed\n* Fix by @contributor in #1\n\nFull Changelog: compare\n"
         for tag, previous in (("v0.2.6", None), ("v0.3.0", "v0.2.6")):
             with self.subTest(tag=tag):
+                if previous:
+                    for ignored in ("v0.3.0-beta.1", "v1foo.2.3", "v01.2.3"):
+                        self.git("-c", "user.name=Test", "-c", "user.email=test@example.com", "commit", "--allow-empty", "-m", ignored)
+                        self.git("tag", ignored)
                 self.git("-c", "user.name=Test", "-c", "user.email=test@example.com", "commit", "--allow-empty", "-m", tag)
                 self.git("tag", tag)
                 with patch.object(release, "ROOT", self.root), patch.object(
