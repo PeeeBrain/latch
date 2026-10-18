@@ -1,0 +1,2324 @@
+mod views;
+
+use crate::{
+    input::TextInput,
+    theme::{self, Appearance, Color, Palette, Source},
+    ui,
+};
+use gpui_kit::{prelude::*, *};
+use latch_core::{
+    auth::{authenticator::AuthCredential, method::AuthMethod, password},
+    password_generator::{self, PasswordOptions},
+    vault::{
+        self, Entry, EntryPreview, coordinator::VaultCoordinator, storage::VaultStorage,
+        workspace::Workspace,
+    },
+};
+use std::path::PathBuf;
+use std::sync::{
+    Arc, Mutex,
+    atomic::{AtomicU64, Ordering},
+};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use zeroize::Zeroizing;
+gpui_kit::actions!(
+    latch,
+    [
+        Quit,
+        Back,
+        Submit,
+        Next,
+        Previous,
+        Add,
+        Edit,
+        Lock,
+        Settings,
+        Actions,
+        CopyUsername,
+        CopyTotp,
+        Tab,
+        TabPrevious,
+        ResetAppearance,
+        Decrease,
+        Increase
+    ]
+);
+#[derive(Clone, PartialEq, Debug)]
+enum Page {
+    Setup,
+    Locked,
+    Browse,
+    Details,
+    Edit,
+    Delete,
+    Settings,
+    Rotate,
+    Health,
+    Actions,
+    Appearance,
+    Preview,
+    Providers,
+    Provider,
+    DeleteProvider,
+    Generator,
+    Discard,
+}
+
+/// Visual weight of a rendered button.
+#[derive(Clone, Copy, PartialEq)]
+pub enum ButtonKind {
+    /// Accent-filled call to action.
+    Primary,
+    /// Neutral fill with hairline border.
+    Secondary,
+    /// Borderless quiet label for inline field actions.
+    Ghost,
+    /// Error-tinted destructive action.
+    Danger,
+}
+enum Reply {
+    Browse(Vec<EntryPreview>),
+    Detail(Entry),
+    Saved,
+    Copied(Zeroizing<String>),
+    Health(Vec<(String, String)>),
+    Rotated,
+    Biometric,
+    Providers(Vec<vault::alias::AliasProviderInfo>, Option<String>),
+}
+/// A command reachable from the Actions panel and, when `root`, from the root list.
+pub struct Command {
+    id: &'static str,
+    label: &'static str,
+    icon: ui::Icon,
+    /// Keystroke in GPUI syntax; `secondary` is Cmd on macOS and Ctrl elsewhere.
+    keys: Option<&'static str>,
+    root: bool,
+}
+const fn command(
+    id: &'static str,
+    label: &'static str,
+    icon: ui::Icon,
+    keys: Option<&'static str>,
+    root: bool,
+) -> Command {
+    Command {
+        id,
+        label,
+        icon,
+        keys,
+        root,
+    }
+}
+const COMMANDS: [Command; 9] = [
+    command(
+        "new",
+        "New credential",
+        ui::Icon::Plus,
+        Some("secondary-n"),
+        true,
+    ),
+    command(
+        "generator",
+        "Generate password",
+        ui::Icon::Dices,
+        None,
+        true,
+    ),
+    command(
+        "details",
+        "View selected credential",
+        ui::Icon::Eye,
+        None,
+        false,
+    ),
+    command(
+        "edit",
+        "Edit selected credential",
+        ui::Icon::Pencil,
+        Some("secondary-e"),
+        false,
+    ),
+    command(
+        "username",
+        "Copy username",
+        ui::Icon::User,
+        Some("secondary-shift-c"),
+        false,
+    ),
+    command(
+        "totp",
+        "Copy one-time code",
+        ui::Icon::Clock,
+        Some("secondary-t"),
+        false,
+    ),
+    command(
+        "health",
+        "Password health",
+        ui::Icon::ShieldCheck,
+        None,
+        true,
+    ),
+    command(
+        "settings",
+        "Settings",
+        ui::Icon::Settings,
+        Some("secondary-,"),
+        true,
+    ),
+    command(
+        "lock",
+        "Lock vault",
+        ui::Icon::Lock,
+        Some("secondary-l"),
+        true,
+    ),
+];
+pub struct Latch {
+    window: AnyWindowHandle,
+    vault: Arc<Mutex<VaultCoordinator>>,
+    epoch: Arc<AtomicU64>,
+    page: Page,
+    fields: Vec<Entity<TextInput>>,
+    query: Entity<TextInput>,
+    action_query: Entity<TextInput>,
+    focus: FocusHandle,
+    /// Stable focus handles for rows and buttons, keyed by element id, so a
+    /// focused control survives re-renders and can be found again.
+    stops: std::cell::RefCell<std::collections::HashMap<ElementId, FocusHandle>>,
+    /// Keyboard stops of the current page in render order; arrows walk them.
+    page_stops: std::cell::RefCell<Vec<FocusHandle>>,
+    /// The stop most recently scrolled into view, so wheel scrolling is not
+    /// undone while focus stays put.
+    revealed: std::rc::Rc<std::cell::RefCell<Option<FocusHandle>>>,
+    /// Page shown by the previous render; entering a page starts at its top.
+    shown: Page,
+    palette_scroll: ScrollHandle,
+    previews: Vec<EntryPreview>,
+    favicons: std::collections::HashMap<url::Url, Option<Arc<RenderImage>>>,
+    favicon_requests: usize,
+    favicon_cancel: tokio::sync::watch::Sender<()>,
+    selected: usize,
+    scroll: ScrollHandle,
+    editing: Option<String>,
+    detail: Option<Entry>,
+    reveal_until: Option<SystemTime>,
+    notice: String,
+    busy: bool,
+    blocked: bool,
+    biometric: bool,
+    clipboard: Option<(Zeroizing<String>, String, SystemTime)>,
+    issues: Vec<(String, String)>,
+    breaches: Vec<(String, String)>,
+    last_query: String,
+    appearance: Option<Appearance>,
+    preview: Option<Appearance>,
+    appearance_directory: PathBuf,
+    appearance_modified: Option<SystemTime>,
+    providers: Vec<vault::alias::AliasProviderInfo>,
+    default_provider: Option<String>,
+    provider: String,
+    draft_alias_provider: Option<String>,
+    generated: Zeroizing<String>,
+    generator_options: PasswordOptions,
+    generator_return: Page,
+    update: Option<cargo_packager_updater::Update>,
+    installing: bool,
+}
+impl Latch {
+    fn auth_state(storage: &VaultStorage) -> (Page, String, bool, bool) {
+        match storage.inspect() {
+            Ok(None) => (Page::Setup, String::new(), false, false),
+            Ok(Some(header)) if matches!(header.kdf.as_str(), "password-pbkdf2" | "argon2id") => (Page::Locked, String::new(), false, false),
+            Ok(Some(header)) if header.kdf.starts_with("oauth-") => (Page::Locked, "This Google vault needs migration in the previous Latch app. Your vault has not been changed.".into(), true, false),
+            Ok(Some(header)) if header.kdf == "biometric-keychain" => (Page::Locked, String::new(), !crate::biometric::supported(), true),
+            Ok(Some(_)) => (Page::Locked, "This vault needs a compatible Latch release. Your vault has not been changed.".into(), true, false),
+            Err(error) => (Page::Locked, error, true, false),
+        }
+    }
+    pub fn new(storage: VaultStorage, window: &mut Window, cx: &mut Context<Self>) -> Self {
+        let (page, notice, blocked, biometric) = Self::auth_state(&storage);
+        let appearance_directory = storage
+            .path
+            .parent()
+            .unwrap_or(std::path::Path::new("."))
+            .to_path_buf();
+        let appearance = Appearance::load(&appearance_directory).unwrap_or_else(|_| {
+            let backup = appearance_directory.join("settings.last-valid.json");
+            theme::read(&backup).ok().and_then(|text| {
+                Appearance::parse(&text, Source::VsCode)
+                    .ok()
+                    .filter(|appearance| appearance.palette(true).is_ok_and(|(_, count)| count > 0))
+                    .or_else(|| Appearance::parse(&text, Source::Zed).ok())
+            })
+        });
+        let appearance_modified = std::fs::metadata(appearance_directory.join("settings.json"))
+            .ok()
+            .and_then(|metadata| metadata.modified().ok());
+        let query =
+            cx.new(|cx| TextInput::new("Search credentials and commands…", false, cx).bare());
+        let action_query = cx.new(|cx| TextInput::new("Search actions…", false, cx).bare());
+        let mut this = Self {
+            window: window.window_handle(),
+            vault: Arc::new(Mutex::new(VaultCoordinator::new(
+                storage,
+                Workspace::new(),
+                Box::new(|_| {}),
+            ))),
+            epoch: Arc::new(AtomicU64::new(0)),
+            page,
+            fields: vec![],
+            query,
+            action_query,
+            focus: cx.focus_handle(),
+            stops: Default::default(),
+            page_stops: Default::default(),
+            revealed: Default::default(),
+            shown: Page::Locked,
+            palette_scroll: ScrollHandle::new(),
+            previews: vec![],
+            favicons: Default::default(),
+            favicon_requests: 0,
+            favicon_cancel: tokio::sync::watch::channel(()).0,
+            selected: 0,
+            scroll: ScrollHandle::new(),
+            editing: None,
+            detail: None,
+            reveal_until: None,
+            notice,
+            busy: false,
+            blocked,
+            biometric,
+            clipboard: None,
+            issues: vec![],
+            breaches: vec![],
+            last_query: String::new(),
+            appearance,
+            preview: None,
+            appearance_directory,
+            appearance_modified,
+            providers: Vec::new(),
+            default_provider: None,
+            provider: String::new(),
+            draft_alias_provider: None,
+            generated: Zeroizing::new(String::new()),
+            generator_options: PasswordOptions::default(),
+            generator_return: Page::Browse,
+            update: None,
+            installing: false,
+        };
+        cx.observe(&this.query, |this, query, cx| {
+            if this.page == Page::Browse && !this.busy && this.last_query != query.read(cx).value()
+            {
+                this.selected = 0;
+                this.search(query.read(cx).value().to_owned(), cx);
+            }
+        })
+        .detach();
+        cx.observe(&this.action_query, |_, _, cx| cx.notify())
+            .detach();
+        this.auth_fields(window, cx);
+        let activity_view = cx.entity().downgrade();
+        cx.intercept_keystrokes(move |_, window, cx| {
+            let _ = activity_view.update(cx, |this, cx| {
+                if this.window == window.window_handle() {
+                    this.activity(window, cx);
+                }
+            });
+        })
+        .detach();
+        let view = cx.entity().downgrade();
+        window.on_window_should_close(cx, move |window, cx| {
+            let _ = view.update(cx, |this, cx| this.lock(window, cx));
+            if crate::integration::has_tray(cx) {
+                window.minimize_window();
+                false
+            } else {
+                true
+            }
+        });
+        cx.on_release(|this, cx| {
+            this.epoch.fetch_add(1, Ordering::SeqCst);
+            this.clear_clipboard(cx);
+            if let Ok(mut vault) = this.vault.try_lock() {
+                let _ = vault.with_vault(|_, workspace| {
+                    workspace.lock();
+                    Ok(())
+                });
+            }
+        })
+        .detach();
+        cx.spawn_in(window, async move |view, cx| {
+            loop {
+                cx.background_executor().timer(Duration::from_secs(1)).await;
+                if view
+                    .update_in(cx, |this, window, cx| this.tick(window, cx))
+                    .is_err()
+                {
+                    break;
+                }
+            }
+        })
+        .detach();
+        this
+    }
+    fn field(&mut self, label: &str, secret: bool, cx: &mut Context<Self>) {
+        self.fields
+            .push(cx.new(|cx| TextInput::new(label, secret, cx)));
+    }
+    pub fn integration_command(
+        &mut self,
+        command: &str,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        match command {
+            "toggle" if window.is_window_active() => window.minimize_window(),
+            "show" | "toggle" => {
+                window.activate_window();
+                cx.activate(true);
+                self.focus_first(window, cx);
+            }
+            "lock" => self.lock(window, cx),
+            "quit" => {
+                self.lock(window, cx);
+                cx.quit();
+            }
+            _ => {}
+        }
+    }
+    fn auth_fields(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.fields.clear();
+        if !self.biometric {
+            self.field("Master password", true, cx);
+        }
+        if self.page == Page::Setup {
+            self.field("Confirm master password", true, cx);
+        }
+        self.focus_first(window, cx);
+    }
+    fn focus_first(&self, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(field) = self.fields.first() {
+            window.focus(&field.read(cx).focus_handle(cx), cx);
+        } else {
+            window.focus(&self.focus, cx);
+        }
+    }
+    fn value(&self, index: usize, cx: &App) -> Zeroizing<String> {
+        Zeroizing::new(
+            self.fields
+                .get(index)
+                .map(|field| field.read(cx).value().to_owned())
+                .unwrap_or_default(),
+        )
+    }
+    fn work(
+        &mut self,
+        cx: &mut Context<Self>,
+        operation: impl FnOnce(&mut VaultCoordinator) -> Result<Reply, String> + Send + 'static,
+    ) {
+        if self.busy {
+            return;
+        }
+        self.busy = true;
+        self.notice.clear();
+        let vault = self.vault.clone();
+        let epoch = self.epoch.clone();
+        let generation = epoch.load(Ordering::SeqCst);
+        let task = cx.background_executor().spawn(async move {
+            let mut vault = vault
+                .lock()
+                .map_err(|_| "Vault service unavailable".to_string())?;
+            if generation != epoch.load(Ordering::SeqCst) {
+                return Err("Operation canceled".into());
+            }
+            let result = operation(&mut vault);
+            if generation != epoch.load(Ordering::SeqCst) {
+                vault.with_vault(|_, workspace| {
+                    workspace.lock();
+                    Ok(())
+                })?;
+                return Err("Operation canceled".into());
+            }
+            result
+        });
+        cx.spawn(async move |view, cx| {
+            let result = task.await;
+            view.update(cx, |this, cx| {
+                if this.epoch.load(Ordering::SeqCst) != generation {
+                    return;
+                }
+                this.busy = false;
+                let previous_page = this.page.clone();
+                match result {
+                    Ok(Reply::Browse(entries)) => {
+                        this.previews = entries;
+                        this.selected = this.selected.min(this.rows(cx).saturating_sub(1));
+                        if matches!(this.page, Page::Locked | Page::Setup) {
+                            this.page = Page::Browse;
+                            this.fields.clear();
+                        }
+                        if this.last_query != this.query.read(cx).value() {
+                            this.search(this.query.read(cx).value().to_owned(), cx);
+                        }
+                        this.load_favicons(cx);
+                    }
+                    Ok(Reply::Detail(entry)) => {
+                        this.fields.clear();
+                        this.fields.push(cx.new(|cx| TextInput::new("Password", true, cx).bare()));
+                        this.fields[0].update(cx, |field, cx| { field.set_value(entry.password.clone(), cx); field.read_only(); });
+                        this.reveal_until = None;
+                        this.detail = Some(entry);
+                        this.page = Page::Details;
+                    }
+                    Ok(Reply::Saved) => {
+                        this.fields.clear();
+                        this.detail = None;
+                        this.editing = None;
+                        this.page = Page::Browse;
+                        this.search(this.query.read(cx).value().to_owned(), cx);
+                        this.notice = "Saved to encrypted vault".into();
+                    }
+                    Ok(Reply::Copied(text)) => this.copy(text, cx),
+                    Ok(Reply::Health(issues)) => {
+                        this.issues = issues;
+                        this.breaches.clear();
+                        this.page = Page::Health;
+                    }
+                    Ok(Reply::Rotated) => {
+                        this.biometric = false;
+                        this.fields.clear();
+                        this.page = Page::Settings;
+                        this.notice = "Master password changed".into();
+                    }
+                    Ok(Reply::Biometric) => {
+                        this.biometric = true;
+                        this.fields.clear();
+                        this.page = Page::Settings;
+                        this.notice = "Vault now uses your device key. Keep this device key available to unlock.".into();
+                    }
+                    Ok(Reply::Providers(providers, default)) => {
+                        this.providers = providers;
+                        this.default_provider = default;
+                        this.fields.clear();
+                        this.page = Page::Providers;
+                    }
+                    Err(error) => this.notice = error,
+                }
+                if previous_page != this.page {
+                    let focus = if this.page == Page::Browse {
+                        this.query.read(cx).focus_handle(cx)
+                    } else {
+                        this.focus.clone()
+                    };
+                    let window = this.window;
+                    cx.defer(move |cx| {
+                        let _ = cx.update_window(window, |_, window, cx| window.focus(&focus, cx));
+                    });
+                }
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
+        cx.notify();
+    }
+    fn load_favicons(&mut self, cx: &mut Context<Self>) {
+        let origins: Vec<_> = self
+            .previews
+            .iter()
+            .take(self.shown_previews(cx))
+            .filter_map(|entry| crate::favicon::origin(entry.url.as_deref()))
+            .filter(|url| !self.favicons.contains_key(url))
+            .take(crate::favicon::MAX_CONCURRENT.saturating_sub(self.favicon_requests))
+            .collect();
+        for url in origins {
+            if self.favicons.len() >= crate::favicon::MAX_CACHED {
+                break;
+            }
+            if self.favicons.contains_key(&url) {
+                continue;
+            }
+            // Pending and unavailable icons both retain the initial tile. Cache
+            // failures too so typing and rendering never retry the same domain.
+            self.favicons.insert(url.clone(), None);
+            self.favicon_requests += 1;
+            let cancel = self.favicon_cancel.subscribe();
+            let generation = self.epoch.load(Ordering::SeqCst);
+            let source = url.clone();
+            let task = cx
+                .background_executor()
+                .spawn(async move { crate::favicon::load(source, cancel) });
+            cx.spawn(async move |view, cx| {
+                let image = task.await;
+                let _ = view.update(cx, |this, cx| {
+                    if this.epoch.load(Ordering::SeqCst) != generation {
+                        return;
+                    }
+                    this.favicon_requests -= 1;
+                    this.favicons.insert(url, image);
+                    this.load_favicons(cx);
+                    cx.notify();
+                });
+            })
+            .detach();
+        }
+    }
+    fn search(&mut self, query: String, cx: &mut Context<Self>) {
+        self.last_query = query.clone();
+        if query.starts_with('>') {
+            cx.notify();
+            return;
+        }
+        self.work(cx, move |vault| {
+            vault.with_vault(|_, workspace| {
+                vault::search::search(workspace, &query).map(Reply::Browse)
+            })
+        });
+    }
+    fn import_appearance(&mut self, cx: &mut Context<Self>) {
+        let epoch = self.epoch.load(Ordering::SeqCst);
+        let page = self.page.clone();
+        let picker = cx.prompt_for_paths(PathPromptOptions {
+            files: true,
+            directories: false,
+            multiple: false,
+            prompt: Some("Choose a T3 Code, VS Code or Zed theme, or settings.json".into()),
+        });
+        cx.spawn(async move |view, cx| {
+            let path = match picker.await {
+                Ok(Ok(Some(paths))) => paths.into_iter().next(),
+                _ => None,
+            };
+            let Some(path) = path else { return; };
+            let result = cx.background_executor().spawn(async move {
+                let text = theme::read(&path)?;
+                // The file's own shape decides the format; the first that
+                // yields colors wins, otherwise the first parse error is shown.
+                let mut first_error = None;
+                for source in [Source::VsCode, Source::Zed] {
+                    match Appearance::parse(&text, source) {
+                        Ok(appearance) if [true, false].into_iter().any(|dark|
+                            appearance.palette(dark).is_ok_and(|(_, count)| count > 0)) => return Ok(Some(appearance)),
+                        Ok(_) => {}
+                        Err(error) => { first_error.get_or_insert(error); }
+                    }
+                }
+                first_error.map_or(Ok(None), Err)
+            }).await;
+            view.update(cx, |this, cx| {
+                if this.epoch.load(Ordering::SeqCst) != epoch || this.page != page { return; }
+                match result {
+                    Ok(Some(appearance)) => {
+                        this.preview = Some(appearance);
+                        this.page = Page::Preview;
+                        this.notice = "Previewing. Press Enter to apply or Esc to cancel.".into();
+                    }
+                    Ok(None) => this.notice = "No colors Latch can use. Choose a T3 Code, VS Code or Zed theme file, or a settings.json with color overrides.".into(),
+                    Err(error) => this.notice = error,
+                }
+                cx.notify();
+            }).ok();
+        }).detach();
+    }
+    fn reset_appearance(&mut self, cx: &mut Context<Self>) {
+        let result = (|| {
+            for name in [
+                "settings.json",
+                "settings.last-valid.json",
+                "appearance-source",
+            ] {
+                match std::fs::remove_file(self.appearance_directory.join(name)) {
+                    Ok(()) => {}
+                    Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                    Err(_) => return Err("Cannot reset appearance".to_string()),
+                }
+            }
+            Ok(())
+        })();
+        match result {
+            Ok(()) => {
+                self.appearance = None;
+                self.preview = None;
+                self.appearance_modified = None;
+                self.notice = "Appearance reset to system fallback".into();
+            }
+            Err(error) => self.notice = error,
+        }
+        cx.notify();
+    }
+    fn reload_appearance(&mut self, cx: &mut Context<Self>) {
+        match Appearance::load(&self.appearance_directory) {
+            Ok(Some(appearance)) => {
+                if [true, false]
+                    .into_iter()
+                    .any(|dark| appearance.palette(dark).is_ok_and(|(_, count)| count > 0))
+                {
+                    let _ = theme::atomic_write(
+                        &self.appearance_directory.join("settings.last-valid.json"),
+                        serde_json::to_string_pretty(&appearance.document)
+                            .unwrap_or_default()
+                            .as_bytes(),
+                    );
+                    self.appearance = Some(appearance);
+                    self.notice = "Appearance reloaded".into();
+                } else {
+                    self.notice = "No applicable colors. Last valid appearance retained.".into();
+                }
+            }
+            Ok(None) => self.appearance = None,
+            Err(error) => self.notice = format!("{error}. Last valid appearance retained."),
+        }
+        cx.notify();
+    }
+    fn activity(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if matches!(self.page, Page::Locked | Page::Setup) {
+            return;
+        }
+        let expired = if let Ok(mut vault) = self.vault.try_lock() {
+            vault
+                .with_vault(|_, workspace| {
+                    workspace.check_session()?;
+                    workspace.refresh();
+                    Ok(())
+                })
+                .is_err()
+        } else {
+            false
+        };
+        if expired {
+            self.lock(window, cx);
+            self.notice = "Session expired. Unlock to continue.".into();
+            cx.stop_propagation();
+        }
+    }
+    fn tick(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self
+            .reveal_until
+            .is_some_and(|deadline| SystemTime::now() >= deadline)
+        {
+            self.reveal_until = None;
+            if let Some(field) = self.fields.first() {
+                field.update(cx, |field, cx| field.set_masked(true, cx));
+            }
+        }
+        // ponytail: poll one small managed file each second; use an OS watcher if
+        // appearance editing ever needs sub-second updates. Parent replacement is detected.
+        let modified = std::fs::metadata(self.appearance_directory.join("settings.json"))
+            .ok()
+            .and_then(|metadata| metadata.modified().ok());
+        if modified != self.appearance_modified {
+            self.appearance_modified = modified;
+            self.reload_appearance(cx);
+        }
+        if let Some((_, _, start)) = &self.clipboard
+            && start
+                .elapsed()
+                .map_or(true, |elapsed| elapsed >= Duration::from_secs(30))
+        {
+            self.clear_clipboard(cx);
+        }
+        let expired = self
+            .vault
+            .try_lock()
+            .ok()
+            .and_then(|mut vault| {
+                vault
+                    .with_vault(|_, workspace| {
+                        let had = workspace.is_unlocked();
+                        if let Some(id) = workspace.session_id() {
+                            workspace.expire_session(id, SystemTime::now());
+                        }
+                        Ok(had && !workspace.is_unlocked())
+                    })
+                    .ok()
+            })
+            .unwrap_or(false);
+        if expired {
+            self.lock(window, cx);
+            self.notice = "Locked after 30 minutes of inactivity".into();
+        }
+        if self.page == Page::Details {
+            cx.notify();
+        }
+    }
+    fn clear_clipboard(&mut self, cx: &mut App) {
+        if let Some((text, marker, _)) = self.clipboard.take()
+            && cx.read_from_clipboard().is_some_and(|item| {
+                item.metadata().map(String::as_str) == Some(marker.as_str())
+                    && item.text().as_deref() == Some(text.as_str())
+            })
+        {
+            cx.write_to_clipboard(ClipboardItem::new_string(String::new()));
+        }
+    }
+    fn copy(&mut self, text: Zeroizing<String>, cx: &mut Context<Self>) {
+        let marker = uuid::Uuid::new_v4().to_string();
+        match crate::clipboard::write(&text, &marker, cx) {
+            Ok(()) => {
+                self.clipboard = Some((text, marker, SystemTime::now()));
+                self.notice = "Copied. Clipboard clears in 30 seconds.".into();
+            }
+            Err(error) => self.notice = error,
+        }
+    }
+    fn lock(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.reveal_until = None;
+        let was_setup = self.page == Page::Setup;
+        self.epoch.fetch_add(1, Ordering::SeqCst);
+        self.busy = true;
+        self.fields.clear();
+        self.previews.clear();
+        self.favicon_cancel.send_replace(());
+        self.favicons.clear();
+        self.favicon_requests = 0;
+        self.detail = None;
+        self.editing = None;
+        self.issues.clear();
+        self.breaches.clear();
+        self.providers.clear();
+        self.default_provider = None;
+        self.draft_alias_provider = None;
+        self.generated = Zeroizing::new(String::new());
+        self.clear_clipboard(cx);
+        let vault = self.vault.clone();
+        let generation = self.epoch.load(Ordering::SeqCst);
+        let task = cx.background_executor().spawn(async move {
+            vault
+                .lock()
+                .map_err(|_| "Vault service unavailable".to_owned())?
+                .with_vault(|storage, workspace| {
+                    workspace.lock();
+                    Ok(Self::auth_state(storage))
+                })
+        });
+        cx.spawn_in(window, async move |view, cx| {
+            let result = task.await;
+            let _ = view.update_in(cx, |this, window, cx| {
+                if this.epoch.load(Ordering::SeqCst) != generation {
+                    return;
+                }
+                this.busy = this.installing;
+                match result {
+                    Ok((page, notice, blocked, biometric)) => {
+                        if page != Page::Setup {
+                            this.page = page;
+                        }
+                        if !notice.is_empty() {
+                            this.notice = notice;
+                        }
+                        this.blocked = blocked;
+                        this.biometric = biometric;
+                    }
+                    Err(error) => {
+                        this.page = Page::Locked;
+                        this.blocked = true;
+                        this.notice = error;
+                    }
+                }
+                this.auth_fields(window, cx);
+                cx.notify();
+            });
+        })
+        .detach();
+        self.page = if was_setup { Page::Setup } else { Page::Locked };
+        self.notice.clear();
+        self.query
+            .update(cx, |query, cx| query.set_value(String::new(), cx));
+        self.auth_fields(window, cx);
+        cx.notify();
+    }
+    fn selected_id(&self) -> Option<String> {
+        self.detail
+            .as_ref()
+            .map(|entry| entry.id.clone())
+            .or_else(|| {
+                self.previews
+                    .get(self.selected)
+                    .map(|entry| entry.id.clone())
+            })
+    }
+    /// Credential rows visible in the root list; a `>` query lists commands only.
+    fn shown_previews(&self, cx: &App) -> usize {
+        if self.query.read(cx).value().starts_with('>') {
+            0
+        } else {
+            self.previews.len()
+        }
+    }
+    /// Root-list commands matching the query, shown after the credentials.
+    fn root_commands(&self, cx: &App) -> Vec<&'static Command> {
+        let query = self.query.read(cx).value();
+        let filter = query
+            .strip_prefix('>')
+            .unwrap_or(query)
+            .trim()
+            .to_lowercase();
+        COMMANDS
+            .iter()
+            .filter(|command| command.root && command.label.to_lowercase().contains(&filter))
+            .collect()
+    }
+    /// Selectable rows in the root list.
+    fn rows(&self, cx: &App) -> usize {
+        self.shown_previews(cx) + self.root_commands(cx).len()
+    }
+    /// The empty-vault notice occupies the first root-list child.
+    fn empty_vault(&self, cx: &App) -> bool {
+        self.previews.is_empty() && self.query.read(cx).value().is_empty()
+    }
+    fn move_selection(&mut self, step: isize, window: &mut Window, cx: &mut Context<Self>) {
+        match self.page {
+            Page::Actions => self.cycle_palette(window, cx, step),
+            Page::Browse => {
+                let last = self.rows(cx).saturating_sub(1);
+                self.selected = self.selected.saturating_add_signed(step).min(last);
+                let offset = usize::from(self.empty_vault(cx));
+                self.scroll.scroll_to_item(self.selected + offset);
+                cx.notify();
+            }
+            _ => {
+                let stops = self.page_stops.borrow().clone();
+                let Some(last) = stops.len().checked_sub(1) else {
+                    return;
+                };
+                let next = match stops
+                    .iter()
+                    .position(|stop| stop.contains_focused(window, cx))
+                {
+                    Some(current) => current.saturating_add_signed(step).min(last),
+                    None if step > 0 => 0,
+                    None => last,
+                };
+                if next == 0 {
+                    // The first stop shows the page from its top, headers included.
+                    self.scroll.set_offset(point(px(0.), px(0.)));
+                }
+                window.focus(&stops[next], cx);
+            }
+        }
+    }
+    /// Pages whose rows are the only actions: they open with the first row
+    /// focused, so Enter and arrows work immediately. Confirmations focus
+    /// Cancel first.
+    fn focus_lands_on_rows(&self) -> bool {
+        matches!(
+            self.page,
+            Page::Settings
+                | Page::Health
+                | Page::Providers
+                | Page::Appearance
+                | Page::Preview
+                | Page::Delete
+                | Page::Discard
+                | Page::DeleteProvider
+        )
+    }
+    fn resize_generated(&mut self, step: i32, cx: &mut Context<Self>) {
+        let length = &mut self.generator_options.length;
+        *length = length.saturating_add_signed(step).clamp(8, 128);
+        self.regenerate(cx);
+    }
+    fn apply_appearance(&mut self, cx: &mut Context<Self>) {
+        if let Some(preview) = self.preview.take() {
+            match preview.save(&self.appearance_directory) {
+                Ok(()) => {
+                    self.appearance = Some(preview);
+                    self.page = Page::Appearance;
+                    self.notice = "Appearance saved".into();
+                }
+                Err(error) => {
+                    self.preview = Some(preview);
+                    self.notice = error
+                }
+            }
+        }
+        cx.notify();
+    }
+    fn open_actions(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let filter = self
+            .query
+            .read(cx)
+            .value()
+            .strip_prefix('>')
+            .unwrap_or("")
+            .trim()
+            .to_owned();
+        self.action_query
+            .update(cx, |query, cx| query.set_value(filter, cx));
+        self.page = Page::Actions;
+        // The palette owns the keyboard while it is open: typing filters it,
+        // and Tab cycles only its own stops.
+        window.focus(&self.action_query.read(cx).focus_handle(cx), cx);
+        cx.notify();
+    }
+
+    /// Moves focus between the palette's own stops, wrapping within the
+    /// palette so obscured controls behind the scrim are unreachable.
+    fn cycle_palette(&mut self, window: &mut Window, cx: &mut Context<Self>, step: isize) {
+        let filter = self.action_query.read(cx).value().trim().to_lowercase();
+        let stops: Vec<FocusHandle> = std::iter::once(self.action_query.read(cx).focus_handle(cx))
+            .chain(
+                COMMANDS
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, command)| command.label.to_lowercase().contains(&filter))
+                    .map(|(index, _)| self.stop_handle(("palette", index).into(), cx)),
+            )
+            .collect();
+        let len = stops.len() as isize;
+        let index = match stops.iter().position(|handle| handle.is_focused(window)) {
+            Some(current) => (current as isize + step).rem_euclid(len) as usize,
+            None => 0,
+        };
+        window.focus(&stops[index], cx);
+        cx.notify();
+    }
+    /// The stable focus handle for an element id.
+    fn stop_handle(&self, id: ElementId, cx: &mut Context<Self>) -> FocusHandle {
+        self.stops
+            .borrow_mut()
+            .entry(id)
+            .or_insert_with(|| cx.focus_handle())
+            .clone()
+    }
+    fn run_command(&mut self, id: &str, window: &mut Window, cx: &mut Context<Self>) {
+        match id {
+            "generator" => self.open_generator(window, cx),
+            "details" => {
+                if let Some(id) = self.selected_id() {
+                    self.work(cx, move |vault| {
+                        vault.with_vault(|_, workspace| {
+                            vault::entries::get_full(workspace, &id).map(Reply::Detail)
+                        })
+                    });
+                }
+            }
+            "new" => self.add(window, cx),
+            "edit" => self.edit(window, cx),
+            "username" => self.copy_field("username", cx),
+            "totp" => self.copy_field("totp", cx),
+            "health" => self.health(cx),
+            "settings" => self.settings(window, cx),
+            "lock" => self.lock(window, cx),
+            _ => {}
+        }
+    }
+    fn copy_field(&mut self, field: &'static str, cx: &mut Context<Self>) {
+        let Some(id) = self.selected_id() else {
+            return;
+        };
+        self.work(cx, move |vault| {
+            vault.with_vault(|_, workspace| {
+                let entry = vault::entries::get_full(workspace, &id)?;
+                let text = match field {
+                    "username" => entry.username.clone(),
+                    "totp" => vault::totp::generate_token(
+                        entry.totp_secret.as_deref().ok_or("No TOTP configured")?,
+                        SystemTime::now()
+                            .duration_since(UNIX_EPOCH)
+                            .map_err(|_| "Invalid system clock")?
+                            .as_secs(),
+                    )?,
+                    _ => entry.password.clone(),
+                };
+                Ok(Reply::Copied(Zeroizing::new(text)))
+            })
+        });
+    }
+    fn add(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if matches!(self.page, Page::Locked | Page::Setup) || self.busy {
+            return;
+        }
+        if self.guard_draft(window, cx) {
+            return;
+        }
+        self.detail = None;
+        self.editing = None;
+        self.form(None, window, cx);
+    }
+    fn form(&mut self, entry: Option<Entry>, window: &mut Window, cx: &mut Context<Self>) {
+        self.page = Page::Edit;
+        self.fields.clear();
+        self.notice.clear();
+        self.draft_alias_provider = entry
+            .as_ref()
+            .and_then(|entry| entry.alias_provider_id.clone());
+        for (label, secret) in [
+            ("Title", false),
+            ("Username", false),
+            ("Password", true),
+            ("Website URL (optional)", false),
+            ("TOTP secret or otpauth URI (optional)", true),
+        ] {
+            self.field(label, secret, cx);
+        }
+        if let Some(entry) = entry {
+            self.editing = Some(entry.id.clone());
+            for (field, value) in self.fields.iter().zip([
+                entry.title.clone(),
+                entry.username.clone(),
+                entry.password.clone(),
+                entry.url.clone().unwrap_or_default(),
+                entry.totp_secret.clone().unwrap_or_default(),
+            ]) {
+                field.update(cx, |field, cx| field.set_value(value, cx));
+            }
+        }
+        self.focus_first(window, cx);
+        cx.notify();
+    }
+    fn edit(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.busy
+            || matches!(self.page, Page::Locked | Page::Setup)
+            || self.guard_draft(window, cx)
+        {
+            return;
+        }
+        if let Some(entry) = self.detail.take() {
+            self.form(Some(entry), window, cx);
+            return;
+        }
+        if let Some(id) = self.selected_id() {
+            let vault = self.vault.clone();
+            if let Ok(mut vault) = vault.try_lock() {
+                match vault.with_vault(|_, workspace| vault::entries::get_full(workspace, &id)) {
+                    Ok(entry) => self.form(Some(entry), window, cx),
+                    Err(error) => self.notice = error,
+                }
+            }
+        }
+    }
+    fn submit(&mut self, _: &Submit, window: &mut Window, cx: &mut Context<Self>) {
+        if self.busy
+            || self.query.read(cx).composing()
+            || self.action_query.read(cx).composing()
+            || self.fields.iter().any(|field| field.read(cx).composing())
+        {
+            return;
+        }
+        match self.page {
+            Page::Setup | Page::Locked | Page::Rotate => {
+                if self.blocked {
+                    return;
+                }
+                if self.page == Page::Locked && self.biometric {
+                    self.work(cx, |vault| {
+                        let key = crate::biometric::retrieve()?;
+                        vault.access(AuthCredential::RawKeyHex(key.to_string()))?;
+                        vault.with_vault(|_, workspace| {
+                            vault::search::search(workspace, "").map(Reply::Browse)
+                        })
+                    });
+                    return;
+                }
+                let value = self.value(0, cx);
+                let setup = self.page == Page::Setup;
+                let rotate = self.page == Page::Rotate;
+                if (setup || rotate)
+                    && (!(12..=1024).contains(&value.len())
+                        || value.as_str() != self.value(1, cx).as_str())
+                {
+                    self.notice="Use 12 to 1024 bytes and matching passwords. There is no password recovery.".into();
+                    cx.notify();
+                    return;
+                }
+                if value.is_empty() || value.len() > 1024 {
+                    self.notice = "Enter your master password".into();
+                    cx.notify();
+                    return;
+                }
+                for field in &self.fields {
+                    field.update(cx, |field, cx| field.set_value(String::new(), cx));
+                }
+                self.work(cx, move |vault| {
+                    if setup || rotate {
+                        let salt = password::generate_salt();
+                        let key = Zeroizing::new(password::derive_key(&value, &salt));
+                        vault.with_vault(|storage, workspace| {
+                            if rotate {
+                                vault::rotate::rotate(
+                                    storage,
+                                    workspace,
+                                    &key,
+                                    AuthMethod::Password,
+                                    &hex::encode(salt),
+                                )
+                            } else {
+                                vault::provision::provision(
+                                    storage,
+                                    workspace,
+                                    &key,
+                                    AuthMethod::Password,
+                                    &hex::encode(salt),
+                                )
+                            }
+                        })?;
+                    } else {
+                        vault.access(AuthCredential::Password(value.to_string()))?;
+                    }
+                    if rotate {
+                        Ok(Reply::Rotated)
+                    } else {
+                        vault.with_vault(|_, workspace| {
+                            vault::search::search(workspace, "").map(Reply::Browse)
+                        })
+                    }
+                });
+            }
+            Page::Edit => {
+                let editing = self.editing.is_some();
+                let entry = Entry {
+                    id: self
+                        .editing
+                        .clone()
+                        .unwrap_or_else(|| uuid::Uuid::new_v4().to_string()),
+                    title: self.value(0, cx).to_string(),
+                    username: self.value(1, cx).to_string(),
+                    password: self.value(2, cx).to_string(),
+                    url: Some(self.value(3, cx).to_string()).filter(|value| !value.is_empty()),
+                    icon_url: None,
+                    totp_secret: Some(self.value(4, cx).to_string()),
+                    alias_provider_id: self.draft_alias_provider.clone(),
+                };
+                self.work(cx, move |vault| {
+                    vault.with_vault(|storage, workspace| {
+                        if editing {
+                            vault::entries::update(workspace, storage, entry)?;
+                        } else {
+                            let mut entry = entry;
+                            if entry.totp_secret.as_deref() == Some("") {
+                                entry.totp_secret = None;
+                            }
+                            vault::entries::add(workspace, storage, entry)?;
+                        }
+                        Ok(Reply::Saved)
+                    })
+                });
+            }
+            Page::Browse => {
+                let shown = self.shown_previews(cx);
+                if self.selected < shown {
+                    self.copy_field("password", cx);
+                } else if let Some(command) = self.root_commands(cx).get(self.selected - shown) {
+                    self.run_command(command.id, window, cx);
+                }
+            }
+            Page::Delete => {
+                if let Some(id) = self.selected_id() {
+                    self.work(cx, move |vault| {
+                        vault.with_vault(|storage, workspace| {
+                            vault::entries::delete(workspace, storage, &id)?;
+                            Ok(Reply::Saved)
+                        })
+                    });
+                }
+            }
+            Page::Details => self.copy_field("password", cx),
+            Page::Actions => {
+                let filter = self.action_query.read(cx).value().trim().to_lowercase();
+                if let Some(command) = COMMANDS
+                    .iter()
+                    .find(|command| command.label.to_lowercase().contains(&filter))
+                {
+                    self.run_command(command.id, window, cx);
+                }
+            }
+            Page::Generator => self.use_generated(window, cx),
+            Page::Preview => self.apply_appearance(cx),
+            Page::Discard => {
+                self.page = Page::Browse;
+                self.fields.clear();
+                self.detail = None;
+                self.editing = None;
+                self.draft_alias_provider = None;
+                window.focus(&self.query.read(cx).focus_handle(cx), cx);
+                self.search(self.query.read(cx).value().to_owned(), cx);
+            }
+            Page::Provider => {
+                let token = self.value(0, cx);
+                let description = self.value(1, cx);
+                let provider = self.provider.clone();
+                self.work(cx, move |vault| {
+                    vault.with_vault(|storage, workspace| {
+                        vault::alias::save_config(
+                            workspace,
+                            storage,
+                            &provider,
+                            &token,
+                            Some(&description),
+                        )?;
+                        Ok(Reply::Providers(
+                            vault::alias::list_configs(workspace)?,
+                            workspace.default_provider_id.clone(),
+                        ))
+                    })
+                });
+            }
+            Page::DeleteProvider => {
+                let provider = self.provider.clone();
+                self.work(cx, move |vault| {
+                    vault.with_vault(|storage, workspace| {
+                        vault::alias::delete_config(workspace, storage, &provider)?;
+                        Ok(Reply::Providers(
+                            vault::alias::list_configs(workspace)?,
+                            workspace.default_provider_id.clone(),
+                        ))
+                    })
+                });
+            }
+            _ => {}
+        }
+        cx.notify();
+    }
+    fn back(&mut self, _: &Back, window: &mut Window, cx: &mut Context<Self>) {
+        if self.busy {
+            return;
+        }
+        if matches!(self.page, Page::Locked | Page::Setup) {
+            window.minimize_window();
+            return;
+        }
+        if self.page == Page::Browse {
+            if self.query.read(cx).value().is_empty() {
+                // Ctrl+Space brings Latch back; Ctrl+Q quits.
+                window.minimize_window();
+            } else {
+                self.query
+                    .update(cx, |query, cx| query.set_value(String::new(), cx));
+            }
+            return;
+        }
+        if self.page == Page::Generator {
+            self.page = self.generator_return.clone();
+            self.generated = Zeroizing::new(String::new());
+            self.focus_first(window, cx);
+            cx.notify();
+            return;
+        }
+        if self.page == Page::Edit
+            && self
+                .fields
+                .iter()
+                .any(|field| !field.read(cx).value().is_empty())
+        {
+            self.page = Page::Discard;
+            window.focus(&self.focus, cx);
+            cx.notify();
+            return;
+        }
+        if self.page == Page::Discard {
+            self.page = Page::Edit;
+            self.focus_first(window, cx);
+            cx.notify();
+            return;
+        }
+        if matches!(self.page, Page::Preview | Page::Appearance) {
+            self.preview = None;
+            self.page = Page::Settings;
+            cx.notify();
+            return;
+        }
+        // Settings subpages return one level up instead of to the root list.
+        let parent = match self.page {
+            Page::Providers | Page::Rotate => Some(Page::Settings),
+            Page::Provider | Page::DeleteProvider => Some(Page::Providers),
+            _ => None,
+        };
+        if let Some(parent) = parent {
+            self.fields.clear();
+            self.notice.clear();
+            self.page = parent;
+            window.focus(&self.focus, cx);
+            cx.notify();
+            return;
+        }
+        self.fields.clear();
+        self.detail = None;
+        self.editing = None;
+        self.notice.clear();
+        self.page = Page::Browse;
+        window.focus(&self.query.read(cx).focus_handle(cx), cx);
+        self.search(self.query.read(cx).value().to_owned(), cx);
+        cx.notify();
+    }
+    fn settings(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.busy || self.guard_draft(window, cx) {
+            return;
+        }
+        if !matches!(self.page, Page::Locked | Page::Setup) {
+            self.page = Page::Settings;
+            window.focus(&self.focus, cx);
+            cx.notify();
+        }
+    }
+    fn check_updates(&mut self, cx: &mut Context<Self>) {
+        if self.busy {
+            return;
+        }
+        self.busy = true;
+        self.notice = "Checking native updates...".into();
+        let epoch = self.epoch.load(Ordering::SeqCst);
+        let task = cx
+            .background_executor()
+            .spawn(async { crate::update::check() });
+        cx.spawn(async move |view, cx| {
+            let result = task.await;
+            let _ = view.update(cx, |this, cx| {
+                if this.epoch.load(Ordering::SeqCst) != epoch { return; }
+                this.busy = false;
+                match result {
+                    Ok(Some(update)) => { this.notice = format!("Native update {} available. Installation locks the vault and exits Latch.", update.version); this.update = Some(update); },
+                    Ok(None) => { this.update = None; this.notice = "You are using the latest published native release.".into(); },
+                    Err(error) => this.notice = error,
+                }
+                cx.notify();
+            });
+        }).detach();
+        cx.notify();
+    }
+    fn install_update(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(update) = self.update.take() else {
+            return;
+        };
+        self.installing = true;
+        self.lock(window, cx);
+        self.busy = true;
+        self.notice = "Downloading and verifying the signed update...".into();
+        let vault = self.vault.clone();
+        let task = cx.background_executor().spawn(async move {
+            // The installer's exit path must never bypass secret cleanup.
+            vault
+                .lock()
+                .map_err(|_| "Vault unavailable".to_string())?
+                .with_vault(|_, workspace| {
+                    workspace.lock();
+                    Ok(())
+                })?;
+            update
+                .download_and_install()
+                .map_err(|error| format!("Update rejected or installation failed: {error}"))
+        });
+        cx.spawn(async move |view, cx| {
+            let result = task.await;
+            let _ = view.update(cx, |this, cx| {
+                this.installing = false;
+                this.busy = false;
+                match result {
+                    Ok(()) => cx.quit(),
+                    Err(error) => this.notice = error,
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+        cx.notify();
+    }
+    fn guard_draft(&mut self, window: &mut Window, cx: &mut Context<Self>) -> bool {
+        if self.page == Page::Discard {
+            return true;
+        }
+        if self.page == Page::Edit
+            && self
+                .fields
+                .iter()
+                .any(|field| !field.read(cx).value().is_empty())
+        {
+            self.page = Page::Discard;
+            window.focus(&self.focus, cx);
+            cx.notify();
+            return true;
+        }
+        if matches!(self.page, Page::Provider | Page::Rotate | Page::Generator) {
+            self.notice = "Finish this form or press Escape before switching pages.".into();
+            cx.notify();
+            return true;
+        }
+        false
+    }
+    fn health(&mut self, cx: &mut Context<Self>) {
+        self.work(cx, |vault| {
+            vault.with_vault(|_, workspace| {
+                workspace.check_session()?;
+                workspace.refresh();
+                let mut issues: Vec<_> =
+                    latch_core::vault_health::audit::check_weak_passwords(&workspace.credentials)
+                        .into_iter()
+                        .map(|entry| (entry.entry_id, format!("{}: {}", entry.title, entry.label)))
+                        .collect();
+                for group in
+                    latch_core::vault_health::audit::check_reused_passwords(&workspace.credentials)
+                {
+                    for entry in group.entries {
+                        issues.push((entry.entry_id, format!("{}: Reused password", entry.title)));
+                    }
+                }
+                Ok(Reply::Health(issues))
+            })
+        });
+    }
+    fn check_breaches(&mut self, cx: &mut Context<Self>) {
+        if self.busy {
+            return;
+        }
+        self.busy = true;
+        self.notice = "Checking password hash prefixes with Have I Been Pwned...".into();
+        let vault = self.vault.clone();
+        let epoch = self.epoch.load(Ordering::SeqCst);
+        let task = cx.background_executor().spawn(async move {
+            let (entries,mut cancel) = vault.lock().map_err(|_|"Vault unavailable")?.with_vault(|_,workspace| {
+                workspace.check_session()?;
+                workspace.refresh();
+                Ok((workspace.credentials.clone(),workspace.alias_cancel_receiver()))
+            })?;
+            let runtime = tokio::runtime::Builder::new_current_thread().enable_all().build().map_err(|_|"Network runtime unavailable")?;
+            runtime.block_on(async move {
+                let checker = latch_core::vault_health::breach_checker::PwnedPasswordsApi;
+                tokio::select! {
+                    report = latch_core::vault_health::audit::check_breach_status(&entries,&checker) => Ok(report),
+                    _ = cancel.changed() => Err("Vault locked; breach check canceled".to_string()),
+                }
+            })
+        });
+        cx.spawn(async move |view,cx| {
+            let result = task.await;
+            view.update(cx,|this,cx| {
+                if this.epoch.load(Ordering::SeqCst) != epoch { return; }
+                this.busy = false;
+                match result {
+                    Ok((breached,unavailable)) => {
+                        this.breaches = breached.into_iter().map(|entry| (entry.entry_id,format!("{}: found in {} breaches",entry.title,entry.breach_count))).collect();
+                        for id in &unavailable { this.breaches.push((id.clone(), "Breach status unavailable; result unknown".into())); }
+                        this.notice = if unavailable.is_empty() { "Breach check completed".into() } else { format!("Breach check unavailable for {} credentials. Their status is unknown.",unavailable.len()) };
+                    },
+                    Err(error) => this.notice = error,
+                }
+                cx.notify();
+            }).ok();
+        }).detach();
+        cx.notify();
+    }
+    fn open_providers(&mut self, cx: &mut Context<Self>) {
+        self.work(cx, |vault| {
+            vault.with_vault(|_, workspace| {
+                Ok(Reply::Providers(
+                    vault::alias::list_configs(workspace)?,
+                    workspace.default_provider_id.clone(),
+                ))
+            })
+        });
+    }
+    fn configure_provider(&mut self, provider: &str, window: &mut Window, cx: &mut Context<Self>) {
+        self.provider = provider.into();
+        self.page = Page::Provider;
+        self.fields.clear();
+        self.field("API token", true, cx);
+        self.field("Description (optional)", false, cx);
+        self.focus_first(window, cx);
+        cx.notify();
+    }
+    fn generate_alias(&mut self, cx: &mut Context<Self>) {
+        if self.busy || self.page != Page::Edit {
+            return;
+        }
+        self.busy = true;
+        let vault = self.vault.clone();
+        let epoch = self.epoch.load(Ordering::SeqCst);
+        let task = cx.background_executor().spawn(async move {
+            let (config,mut cancel) = vault.lock().map_err(|_|"Vault unavailable")?.with_vault(|_,workspace|{
+                workspace.check_session()?;workspace.refresh();
+                let provider=workspace.default_provider_id.as_deref().or_else(||workspace.alias_configs.first().map(|config|config.provider_id.as_str())).ok_or("Configure an alias provider in Settings first")?;
+                let config=workspace.alias_configs.iter().find(|config|config.provider_id==provider).cloned().ok_or("Default alias provider is unavailable")?;
+                Ok((config,workspace.alias_cancel_receiver()))
+            })?;
+            let runtime=tokio::runtime::Builder::new_current_thread().enable_all().build().map_err(|_|"Network runtime unavailable")?;
+            runtime.block_on(async move {
+                let client=vault::alias::AliasClient::new()?;
+                let email=tokio::select! { result=client.generate(&config)=>result?, _=cancel.changed()=>return Err("Vault locked; alias request canceled".to_string()) };
+                Ok((email,config.provider_id.clone()))
+            })
+        });
+        cx.spawn(async move |view, cx| {
+            let result = task.await;
+            view.update(cx, |this, cx| {
+                if this.epoch.load(Ordering::SeqCst) != epoch {
+                    return;
+                }
+                this.busy = false;
+                match result {
+                    Ok((email, provider)) if this.page == Page::Edit => {
+                        this.fields[1].update(cx, |field, cx| field.set_value(email, cx));
+                        this.draft_alias_provider = Some(provider);
+                        this.notice = "Alias added to your draft".into();
+                    }
+                    Ok(_) => {}
+                    Err(error) => this.notice = error,
+                }
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
+        cx.notify();
+    }
+    fn regenerate(&mut self, cx: &mut Context<Self>) {
+        match password_generator::generate_password(&self.generator_options) {
+            Ok(value) => self.generated = Zeroizing::new(value),
+            Err(error) => {
+                self.generated = Zeroizing::new(String::new());
+                self.notice = error;
+            }
+        }
+        cx.notify();
+    }
+    fn open_generator(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.generator_return = self.page.clone();
+        self.page = Page::Generator;
+        self.regenerate(cx);
+        window.focus(&self.focus, cx);
+    }
+    fn use_generated(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.generated.is_empty() {
+            return;
+        }
+        let password = self.generated.to_string();
+        if self.generator_return != Page::Edit {
+            self.detail = None;
+            self.editing = None;
+            self.form(None, window, cx);
+        } else {
+            self.page = Page::Edit;
+            self.focus_first(window, cx);
+        }
+        self.fields[2].update(cx, |field, cx| field.set_value(password, cx));
+        self.generated = Zeroizing::new(String::new());
+        cx.notify();
+    }
+    fn button(
+        &self,
+        id: impl Into<ElementId>,
+        icon: Option<ui::Icon>,
+        label: impl Into<SharedString>,
+        kind: ButtonKind,
+        action: impl Fn(&mut Self, &mut Window, &mut Context<Self>) + 'static,
+        cx: &mut Context<Self>,
+    ) -> gpui_kit::base::Button {
+        let palette = cx.global::<Palette>().clone();
+        let label = label.into();
+        let (background, hover, text, border) = match kind {
+            ButtonKind::Primary => (
+                palette.color(Color::Button),
+                palette.color(Color::ButtonHover),
+                palette.color(Color::ButtonText),
+                gpui_kit::transparent_black(),
+            ),
+            ButtonKind::Secondary => (
+                ui::wash(&palette, 0.05),
+                ui::wash(&palette, 0.09),
+                palette.color(Color::Text),
+                palette.color(Color::Border),
+            ),
+            ButtonKind::Ghost => (
+                gpui_kit::transparent_black(),
+                ui::wash(&palette, 0.07),
+                palette.color(Color::Muted),
+                gpui_kit::transparent_black(),
+            ),
+            ButtonKind::Danger => (
+                palette.color(Color::Error).opacity(0.12),
+                palette.color(Color::Error).opacity(0.2),
+                palette.color(Color::Error),
+                palette.color(Color::Error).opacity(0.3),
+            ),
+        };
+        let focus = palette.color(Color::Focus);
+        let action = std::rc::Rc::new(action);
+        let id = id.into();
+        let stop = self.stop(&id, cx);
+        gpui_kit::base::Button::new(id)
+            .track_focus(&stop)
+            .relative()
+            .child(self.reveal(stop))
+            .accessibility_label(label.clone())
+            .disabled(self.busy)
+            .h(px(28.))
+            .px(px(12.))
+            .gap(px(6.))
+            .rounded(px(ui::RADIUS - 2.))
+            .border_1()
+            .border_color(border)
+            .bg(background)
+            .text_color(text)
+            .text_size(px(ui::TEXT_SM + 0.5))
+            .line_height(px(18.))
+            .font_weight(FontWeight::MEDIUM)
+            .cursor_pointer()
+            .hover(move |style| style.bg(hover))
+            .active(move |style| style.opacity(0.85))
+            .styles(|s| s.disabled(|style| style.opacity(0.45)))
+            .focus(move |style| style.border_color(focus))
+            .on_action(cx.listener({
+                let action = action.clone();
+                move |this, _: &Submit, window, cx| action(this, window, cx)
+            }))
+            .on_click(cx.listener(move |this, _, window, cx| action(this, window, cx)))
+            .when_some(icon, |button, icon| button.child(icon))
+            .child(label)
+    }
+}
+pub fn init(cx: &mut App) {
+    cx.bind_keys([
+        KeyBinding::new("escape", Back, Some("Latch")),
+        KeyBinding::new("ctrl-alt-r", ResetAppearance, Some("Latch")),
+        KeyBinding::new("cmd-alt-r", ResetAppearance, Some("Latch")),
+        KeyBinding::new("enter", Submit, Some("Latch")),
+        KeyBinding::new("down", Next, Some("Latch")),
+        KeyBinding::new("up", Previous, Some("Latch")),
+        KeyBinding::new("tab", Tab, Some("Latch")),
+        KeyBinding::new("left", Decrease, Some("Latch")),
+        KeyBinding::new("right", Increase, Some("Latch")),
+        KeyBinding::new("shift-tab", TabPrevious, Some("Latch")),
+        KeyBinding::new("ctrl-n", Add, Some("Latch")),
+        KeyBinding::new("cmd-n", Add, Some("Latch")),
+        KeyBinding::new("ctrl-e", Edit, Some("Latch")),
+        KeyBinding::new("cmd-e", Edit, Some("Latch")),
+        KeyBinding::new("ctrl-l", Lock, Some("Latch")),
+        KeyBinding::new("cmd-l", Lock, Some("Latch")),
+        KeyBinding::new("ctrl-k", Actions, Some("Latch")),
+        KeyBinding::new("cmd-k", Actions, Some("Latch")),
+        KeyBinding::new("ctrl-,", Settings, Some("Latch")),
+        KeyBinding::new("cmd-,", Settings, Some("Latch")),
+        KeyBinding::new("ctrl-shift-c", CopyUsername, Some("Latch")),
+        KeyBinding::new("cmd-shift-c", CopyUsername, Some("Latch")),
+        KeyBinding::new("ctrl-t", CopyTotp, Some("Latch")),
+        KeyBinding::new("cmd-t", CopyTotp, Some("Latch")),
+        KeyBinding::new("ctrl-q", Quit, Some("Latch")),
+        KeyBinding::new("cmd-q", Quit, Some("Latch")),
+    ]);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{Latch, Page, Submit};
+    use gpui_kit::{Focusable, TestAppContext};
+    use latch_core::vault::storage::VaultStorage;
+
+    #[gpui_kit::test]
+    fn locking_cancels_and_discards_pending_favicons(cx: &mut TestAppContext) {
+        let directory = tempfile::tempdir().unwrap();
+        cx.update(gpui_kit::init);
+        let window = cx.add_window(|window, cx| {
+            Latch::new(
+                VaultStorage {
+                    path: directory.path().join("vault.enc"),
+                },
+                window,
+                cx,
+            )
+        });
+        window
+            .update(cx, |this, window, cx| {
+                this.page = Page::Browse;
+                for id in ["one", "two"] {
+                    this.previews.push(latch_core::vault::EntryPreview {
+                        id: id.into(),
+                        title: "Example".into(),
+                        username: "user".into(),
+                        url: Some("https://example.com/login".into()),
+                        icon_url: Some("https://icons.duckduckgo.com/ip3/example.com.ico".into()),
+                        has_totp: false,
+                    });
+                }
+                this.load_favicons(cx);
+                this.load_favicons(cx);
+                assert_eq!(this.favicon_requests, 1, "same-origin requests are shared");
+                let canceled = this.favicon_cancel.subscribe();
+                this.lock(window, cx);
+                assert!(canceled.has_changed().unwrap());
+                assert!(this.favicons.is_empty());
+            })
+            .unwrap();
+        cx.run_until_parked();
+        window
+            .update(cx, |this, _, _| {
+                assert!(this.page == Page::Locked);
+                assert!(
+                    this.favicons.is_empty(),
+                    "a late result must not repopulate the cache"
+                );
+                assert_eq!(this.favicon_requests, 0);
+            })
+            .unwrap();
+    }
+
+    #[gpui_kit::test]
+    fn lock_after_setup_commits_can_unlock_the_created_vault(cx: &mut TestAppContext) {
+        let directory = tempfile::tempdir().unwrap();
+        cx.update(gpui_kit::init);
+        let window = cx.add_window(|window, cx| {
+            Latch::new(
+                VaultStorage {
+                    path: directory.path().join("vault.enc"),
+                },
+                window,
+                cx,
+            )
+        });
+        window
+            .update(cx, |this, window, cx| {
+                // The storage commit can finish before the UI receives its setup reply.
+                let salt = latch_core::auth::password::generate_salt();
+                let key =
+                    latch_core::auth::password::derive_key("a long test master password", &salt);
+                this.vault
+                    .lock()
+                    .unwrap()
+                    .with_vault(|storage, workspace| {
+                        latch_core::vault::provision::provision(
+                            storage,
+                            workspace,
+                            &key,
+                            latch_core::auth::method::AuthMethod::Password,
+                            &hex::encode(salt),
+                        )
+                    })
+                    .unwrap();
+                this.lock(window, cx);
+            })
+            .unwrap();
+        cx.run_until_parked();
+        window
+            .update(cx, |this, window, cx| {
+                assert!(this.page == Page::Locked, "{:?}", this.page);
+                assert_eq!(this.fields.len(), 1);
+                this.fields[0].update(cx, |field, cx| {
+                    field.set_value("a long test master password".into(), cx)
+                });
+                this.submit(&Submit, window, cx);
+            })
+            .unwrap();
+        cx.run_until_parked();
+        window
+            .update(cx, |this, _, _| {
+                assert!(this.page == Page::Browse, "{}", this.notice)
+            })
+            .unwrap();
+    }
+
+    #[gpui_kit::test]
+    fn lock_refreshes_committed_auth_method(cx: &mut TestAppContext) {
+        let directory = tempfile::tempdir().unwrap();
+        let storage = VaultStorage {
+            path: directory.path().join("vault.enc"),
+        };
+        latch_core::vault::provision::provision(
+            &storage,
+            &mut latch_core::vault::workspace::Workspace::new(),
+            &[7; 32],
+            latch_core::auth::method::AuthMethod::Biometric,
+            "",
+        )
+        .unwrap();
+        cx.update(gpui_kit::init);
+        let window = cx.add_window(|window, cx| Latch::new(storage, window, cx));
+        window
+            .update(cx, |this, window, cx| {
+                this.vault
+                    .lock()
+                    .unwrap()
+                    .with_vault(|storage, workspace| {
+                        latch_core::vault::access::access(storage, workspace, &[7; 32])?;
+                        latch_core::vault::rotate::password(
+                            storage,
+                            workspace,
+                            "a new test master password",
+                        )
+                    })
+                    .unwrap();
+                // Rotation committed, but its UI reply has not updated the old method.
+                this.page = Page::Rotate;
+                assert!(this.biometric);
+                this.lock(window, cx);
+            })
+            .unwrap();
+        cx.run_until_parked();
+        window
+            .update(cx, |this, window, cx| {
+                assert_eq!(this.page, Page::Locked);
+                assert!(!this.biometric, "the committed vault requires a password");
+                assert!(!this.blocked);
+                assert!(!this.busy);
+                assert_eq!(this.fields.len(), 1);
+                this.fields[0].update(cx, |field, cx| {
+                    field.set_value("a new test master password".into(), cx)
+                });
+                this.submit(&Submit, window, cx);
+            })
+            .unwrap();
+        cx.run_until_parked();
+        window
+            .update(cx, |this, window, cx| {
+                assert_eq!(this.page, Page::Browse, "{}", this.notice);
+                this.vault
+                    .lock()
+                    .unwrap()
+                    .with_vault(|storage, workspace| {
+                        latch_core::vault::rotate::rotate(
+                            storage,
+                            workspace,
+                            &[8; 32],
+                            latch_core::auth::method::AuthMethod::Biometric,
+                            "",
+                        )
+                    })
+                    .unwrap();
+                this.lock(window, cx);
+            })
+            .unwrap();
+        cx.run_until_parked();
+        window
+            .update(cx, |this, _, _| {
+                assert_eq!(this.page, Page::Locked);
+                assert!(this.biometric);
+                assert!(this.fields.is_empty());
+                assert_eq!(this.blocked, !crate::biometric::supported());
+            })
+            .unwrap();
+    }
+
+    #[gpui_kit::test]
+    fn keyboard_can_submit_auth_and_activate_an_action_button(cx: &mut TestAppContext) {
+        let directory = tempfile::tempdir().unwrap();
+        cx.update(|cx| {
+            gpui_kit::init(cx);
+            super::init(cx);
+            crate::input::init(cx);
+        });
+        let (view, cx) = cx.add_window_view(|window, cx| {
+            Latch::new(
+                VaultStorage {
+                    path: directory.path().join("vault.enc"),
+                },
+                window,
+                cx,
+            )
+        });
+        cx.update(|window, cx| {
+            view.update(cx, |this, cx| {
+                for field in &this.fields {
+                    field.update(cx, |field, cx| {
+                        field.set_value("a long test master password".into(), cx)
+                    });
+                }
+            });
+            window.draw(cx).clear(cx);
+        });
+        cx.simulate_keystrokes("enter");
+        cx.run_until_parked();
+        cx.update(|window, cx| {
+            assert!(
+                view.read(cx).page == Page::Browse,
+                "{}",
+                view.read(cx).notice
+            );
+            view.read(cx)
+                .vault
+                .lock()
+                .unwrap()
+                .with_vault(|_, workspace| {
+                    workspace.session_start =
+                        Some(std::time::SystemTime::now() - std::time::Duration::from_secs(60));
+                    Ok(())
+                })
+                .unwrap();
+            window.draw(cx).clear(cx);
+        });
+        cx.simulate_keystrokes("tab");
+        cx.update(|_, cx| {
+            view.read(cx)
+                .vault
+                .lock()
+                .unwrap()
+                .with_vault(|_, workspace| {
+                    assert!(
+                        workspace.session_start.unwrap().elapsed().unwrap()
+                            < std::time::Duration::from_secs(5)
+                    );
+                    Ok(())
+                })
+                .unwrap();
+        });
+        cx.simulate_keystrokes("ctrl-k");
+        cx.update(|window, cx| {
+            assert!(view.read(cx).page == Page::Actions);
+            // The palette opens with its filter focused and owns the keyboard.
+            view.read(cx)
+                .action_query
+                .read(cx)
+                .focus_handle(cx)
+                .is_focused(window)
+                .then_some(())
+                .expect("palette filter should be focused on open");
+            window.draw(cx).clear(cx);
+        });
+        cx.simulate_keystrokes("tab");
+        cx.update(|window, cx| {
+            window.draw(cx).clear(cx);
+        });
+        let keystroke = gpui_kit::Keystroke::parse("enter").unwrap();
+        cx.simulate_event(gpui_kit::KeyDownEvent {
+            keystroke: keystroke.clone(),
+            is_held: false,
+            prefer_character_input: false,
+        });
+        cx.simulate_event(gpui_kit::KeyUpEvent { keystroke });
+        cx.run_until_parked();
+        cx.update(|_, cx| {
+            assert!(view.read(cx).page == Page::Edit, "{:?}", view.read(cx).page);
+        });
+        cx.update(|window, cx| {
+            view.update(cx, |this, cx| {
+                this.back(&super::Back, window, cx);
+                this.back(&super::Back, window, cx);
+            });
+        });
+        cx.run_until_parked();
+        cx.update(|window, cx| {
+            view.update(cx, |this, cx| {
+                this.query
+                    .update(cx, |query, cx| query.set_value(">health".into(), cx));
+                this.submit(&Submit, window, cx);
+                window.focus(&this.action_query.read(cx).focus_handle(cx), cx);
+            });
+            window.draw(cx).clear(cx);
+        });
+        cx.simulate_keystrokes("enter");
+        cx.run_until_parked();
+        cx.update(|_, cx| {
+            assert!(
+                view.read(cx).page == Page::Health,
+                "{:?}",
+                view.read(cx).page
+            );
+        });
+    }
+
+    #[gpui_kit::test]
+    fn native_vault_flow_persists_credentials_and_lock_clears_drafts(cx: &mut TestAppContext) {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("vault.enc");
+        cx.update(|cx| {
+            gpui_kit::init(cx);
+            super::init(cx);
+            crate::input::init(cx);
+        });
+        let window =
+            cx.add_window(|window, cx| Latch::new(VaultStorage { path: path.clone() }, window, cx));
+        window
+            .update(cx, |this, window, cx| {
+                for field in &this.fields {
+                    field.update(cx, |field, cx| {
+                        field.set_value("a long test master password".into(), cx)
+                    });
+                }
+                this.submit(&Submit, window, cx);
+            })
+            .unwrap();
+        cx.run_until_parked();
+        window
+            .update(cx, |this, window, cx| {
+                assert!(this.page == Page::Browse, "{}", this.notice);
+                this.add(window, cx);
+                for (field, value) in this.fields.iter().zip([
+                    "Example",
+                    "person@example.com",
+                    "a different credential secret",
+                    "https://example.com",
+                    "",
+                ]) {
+                    field.update(cx, |field, cx| field.set_value(value.into(), cx));
+                }
+                this.submit(&Submit, window, cx);
+            })
+            .unwrap();
+        cx.run_until_parked();
+        window
+            .update(cx, |this, window, cx| {
+                assert!(this.page == Page::Browse, "{}", this.notice);
+                assert_eq!(this.previews.len(), 1);
+                this.copy_field("password", cx);
+                window.focus(&this.focus, cx);
+            })
+            .unwrap();
+        cx.run_until_parked();
+        window
+            .update(cx, |this, window, cx| {
+                assert_eq!(
+                    cx.read_from_clipboard()
+                        .and_then(|item| item.text())
+                        .as_deref(),
+                    Some("a different credential secret")
+                );
+                this.edit(window, cx);
+                assert_eq!(this.value(2, cx).as_str(), "a different credential secret");
+                this.settings(window, cx);
+                assert!(this.page == Page::Discard);
+                assert_eq!(this.value(2, cx).as_str(), "a different credential secret");
+                this.back(&super::Back, window, cx);
+                assert!(this.page == Page::Edit);
+                this.lock(window, cx);
+                assert!(this.detail.is_none());
+                assert!(this.previews.is_empty());
+                assert!(
+                    this.fields
+                        .iter()
+                        .all(|field| field.read(cx).value().is_empty())
+                );
+                assert!(
+                    cx.read_from_clipboard()
+                        .and_then(|item| item.text())
+                        .is_none_or(|value| value.is_empty())
+                );
+                this.copy(zeroize::Zeroizing::new("user copied text".into()), cx);
+                cx.write_to_clipboard(gpui_kit::ClipboardItem::new_string(
+                    "user copied text".into(),
+                ));
+                this.lock(window, cx);
+                assert_eq!(
+                    cx.read_from_clipboard()
+                        .and_then(|item| item.text())
+                        .as_deref(),
+                    Some("user copied text")
+                );
+                this.fields[0].update(cx, |field, cx| {
+                    field.set_value("a long test master password".into(), cx)
+                });
+                this.submit(&Submit, window, cx);
+                this.lock(window, cx);
+            })
+            .unwrap();
+        cx.run_until_parked();
+        window
+            .update(cx, |this, _, _| {
+                assert!(this.page == Page::Locked);
+                assert!(this.previews.is_empty());
+                assert!(
+                    !this
+                        .vault
+                        .lock()
+                        .unwrap()
+                        .with_vault(|_, workspace| Ok(workspace.is_unlocked()))
+                        .unwrap()
+                );
+            })
+            .unwrap();
+        assert!(
+            !std::fs::read_to_string(path)
+                .unwrap()
+                .contains("credential secret")
+        );
+    }
+
+    #[gpui_kit::test]
+    fn discarding_a_generated_draft_forgets_the_opened_credential(cx: &mut TestAppContext) {
+        let directory = tempfile::tempdir().unwrap();
+        cx.update(|cx| {
+            gpui_kit::init(cx);
+            super::init(cx);
+            crate::input::init(cx);
+        });
+        let window = cx.add_window(|window, cx| {
+            Latch::new(
+                VaultStorage {
+                    path: directory.path().join("vault.enc"),
+                },
+                window,
+                cx,
+            )
+        });
+        window
+            .update(cx, |this, window, cx| {
+                for field in &this.fields {
+                    field.update(cx, |field, cx| {
+                        field.set_value("a long test master password".into(), cx)
+                    });
+                }
+                this.submit(&Submit, window, cx);
+            })
+            .unwrap();
+        cx.run_until_parked();
+        for title in ["Alpha", "Bravo"] {
+            window
+                .update(cx, |this, window, cx| {
+                    this.add(window, cx);
+                    for (field, value) in this.fields.iter().zip([
+                        title.to_owned(),
+                        "person@example.com".into(),
+                        format!("{title} secret"),
+                    ]) {
+                        field.update(cx, |field, cx| field.set_value(value, cx));
+                    }
+                    this.submit(&Submit, window, cx);
+                })
+                .unwrap();
+            cx.run_until_parked();
+            window
+                .update(cx, |this, _, _| {
+                    assert!(this.page == Page::Browse, "{}", this.notice)
+                })
+                .unwrap();
+        }
+        let index = |this: &Latch, title: &str| {
+            this.previews
+                .iter()
+                .position(|entry| entry.title == title)
+                .unwrap()
+        };
+        window
+            .update(cx, |this, window, cx| {
+                this.selected = index(this, "Alpha");
+                this.run_command("details", window, cx);
+            })
+            .unwrap();
+        cx.run_until_parked();
+        window
+            .update(cx, |this, window, cx| {
+                assert!(this.page == Page::Details, "{}", this.notice);
+                this.run_command("generator", window, cx);
+                this.submit(&Submit, window, cx);
+                assert!(this.page == Page::Edit);
+                this.back(&super::Back, window, cx);
+                assert!(this.page == Page::Discard);
+                this.submit(&Submit, window, cx);
+            })
+            .unwrap();
+        cx.run_until_parked();
+        window
+            .update(cx, |this, window, cx| {
+                assert!(this.page == Page::Browse);
+                this.selected = index(this, "Bravo");
+                this.submit(&Submit, window, cx);
+            })
+            .unwrap();
+        cx.run_until_parked();
+        cx.update(|cx| {
+            assert_eq!(
+                cx.read_from_clipboard()
+                    .and_then(|item| item.text())
+                    .as_deref(),
+                Some("Bravo secret")
+            );
+        });
+    }
+}
+#[cfg(test)]
+mod tab_order {
+    use super::Latch;
+    use gpui_kit::{Focusable, TestAppContext};
+    use latch_core::vault::storage::VaultStorage;
+
+    #[gpui_kit::test]
+    fn tab_reaches_every_setup_field(cx: &mut TestAppContext) {
+        let directory = tempfile::tempdir().unwrap();
+        cx.update(|cx| {
+            gpui_kit::init(cx);
+            super::init(cx);
+            crate::input::init(cx);
+        });
+        let (view, cx) = cx.add_window_view(|window, cx| {
+            Latch::new(
+                VaultStorage {
+                    path: directory.path().join("vault.enc"),
+                },
+                window,
+                cx,
+            )
+        });
+        cx.update(|window, cx| window.draw(cx).clear(cx));
+        cx.simulate_keystrokes("tab");
+        cx.update(|window, cx| {
+            let confirm = view.read(cx).fields[1].read(cx).focus_handle(cx);
+            assert!(
+                confirm.is_focused(window),
+                "Tab must move to the confirm field"
+            );
+        });
+    }
+}
+
+#[cfg(test)]
+mod keyboard {
+    use super::{Latch, Page, Submit};
+    use gpui_kit::{Focusable, TestAppContext};
+    use latch_core::vault::storage::VaultStorage;
+
+    #[gpui_kit::test]
+    fn list_pages_and_confirmations_are_keyboard_first(cx: &mut TestAppContext) {
+        let directory = tempfile::tempdir().unwrap();
+        cx.update(|cx| {
+            gpui_kit::init(cx);
+            super::init(cx);
+            crate::input::init(cx);
+        });
+        let (view, cx) = cx.add_window_view(|window, cx| {
+            Latch::new(
+                VaultStorage {
+                    path: directory.path().join("vault.enc"),
+                },
+                window,
+                cx,
+            )
+        });
+        cx.update(|window, cx| {
+            view.update(cx, |this, cx| {
+                for field in &this.fields {
+                    field.update(cx, |field, cx| {
+                        field.set_value("a long test master password".into(), cx)
+                    });
+                }
+                this.submit(&Submit, window, cx);
+            })
+        });
+        cx.run_until_parked();
+        cx.simulate_keystrokes("ctrl-,");
+        cx.update(|window, cx| window.draw(cx).clear(cx));
+        let focused_stop = |cx: &mut gpui_kit::VisualTestContext| {
+            cx.update(|window, cx| {
+                view.read(cx)
+                    .page_stops
+                    .borrow()
+                    .iter()
+                    .position(|stop| stop.is_focused(window))
+            })
+        };
+        assert_eq!(focused_stop(cx), Some(0), "settings opens on its first row");
+        cx.simulate_keystrokes("down down");
+        cx.update(|window, cx| window.draw(cx).clear(cx));
+        assert_eq!(focused_stop(cx), Some(2), "arrows walk the page's rows");
+
+        cx.simulate_keystrokes("escape");
+        cx.run_until_parked();
+        cx.simulate_keystrokes("ctrl-n");
+        cx.update(|window, cx| {
+            view.update(cx, |this, cx| {
+                this.fields[0].update(cx, |field, cx| field.set_value("Draft".into(), cx))
+            });
+            window.draw(cx).clear(cx);
+        });
+        cx.simulate_keystrokes("escape");
+        cx.update(|window, cx| window.draw(cx).clear(cx));
+        cx.update(|_, cx| assert!(view.read(cx).page == Page::Discard));
+        cx.simulate_keystrokes("enter");
+        cx.run_until_parked();
+        cx.update(|window, cx| {
+            let this = view.read(cx);
+            assert!(
+                this.page == Page::Edit,
+                "Enter on a confirmation hits Cancel first"
+            );
+            assert_eq!(this.fields[0].read(cx).value(), "Draft");
+            assert!(this.fields[0].read(cx).focus_handle(cx).is_focused(window));
+        });
+    }
+}

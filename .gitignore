@@ -32,10 +32,8 @@ yarn.lock
 *.log
 *.tsbuildinfo
 
-# Rust/Tauri
-target/
-Cargo.lock
-frontend/src-tauri/target/
+# Python release tooling
+__pycache__/
 
 # Local config
 .env
@@ -45,9 +43,6 @@ frontend/src-tauri/target/
 # Logs
 logs/
 *.log
-
-# Cargo.lock is committed because Latch is an application.
-!frontend/src-tauri/Cargo.lock
 
 # Test files
 test-results/
