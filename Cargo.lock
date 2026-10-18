@@ -4191,6 +4191,7 @@ name = "latch-desktop"
 version = "0.3.0"
 dependencies = [
  "cargo-packager-updater",
+ "embed-resource",
  "global-hotkey",
  "gpui-kit",
  "gtk",

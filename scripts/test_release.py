@@ -77,9 +77,9 @@ class ReleaseTests(unittest.TestCase):
         release.write_manifest(assets, "PeeeBrain/latch", "0.3.0", public_key)
         manifest = json.loads((assets / "native-latest.json").read_text())
         self.assertEqual(manifest["version"], "0.3.0")
-        self.assertEqual(set(manifest["platforms"]), {"windows-x86_64", "macos-aarch64", "macos-x86_64", "linux-x86_64"})
+        self.assertEqual(set(manifest["platforms"]), {"windows-x86_64", "macos-aarch64", "linux-x86_64"})
         self.assertEqual({platform: item["format"] for platform, item in manifest["platforms"].items()}, {
-            "windows-x86_64": "nsis", "macos-aarch64": "app", "macos-x86_64": "app", "linux-x86_64": "appimage",
+            "windows-x86_64": "nsis", "macos-aarch64": "app", "linux-x86_64": "appimage",
         })
         for item in manifest["platforms"].values():
             name = item["url"].split("/")[-1]

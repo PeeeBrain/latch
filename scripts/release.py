@@ -14,7 +14,7 @@ import tomllib
 
 
 ROOT = Path(__file__).resolve().parent.parent
-PLATFORMS = ("windows-x86_64", "macos-aarch64", "macos-x86_64", "linux-x86_64")
+PLATFORMS = ("windows-x86_64", "macos-aarch64", "linux-x86_64")
 # The first format is the one supported by cargo-packager-updater on that OS.
 FORMATS = {
     "windows": (("nsis", "*-setup.exe", "-setup.exe"),),
