@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       sign:
-        description: Sign and verify release assets without publishing a release
+        description: Sign release assets without publishing a release
         type: boolean
         default: false
   workflow_call:
@@ -24,6 +24,10 @@ on:
 
 permissions:
   contents: read
+
+concurrency:
+  group: native-packages-${{ github.event_name }}-${{ github.head_ref || inputs.release-tag || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   package:

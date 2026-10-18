@@ -1,4 +1,4 @@
-//! Shared vault operations for the native app and the temporary migration host.
+//! Vault operations shared by the native app and historical compatibility tests.
 
 pub mod auth;
 pub mod crypto;

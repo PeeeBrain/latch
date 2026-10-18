@@ -25,4 +25,6 @@ jobs:
         with:
           # GPUI's GTK dependency still uses glib 0.18; no compatible patched
           # release is available for that dependency line.
-          allow-ghsas: GHSA-wrw7-89jp-8q8g
+          # jsonwebtoken 9 remains confined to legacy vault compatibility tests;
+          # it is absent from the native dependency graph and release binaries.
+          allow-ghsas: GHSA-wrw7-89jp-8q8g, GHSA-h395-gr6q-cpjc

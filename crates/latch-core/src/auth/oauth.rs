@@ -45,7 +45,7 @@ pub fn derive_key(user_id: &str) -> Result<[u8; 32], String> {
     Ok(key)
 }
 
-/// Compatibility with the writer at 25f09de; confined to the migration bridge.
+/// Compatibility with the writer at 25f09de; used only by legacy vault tests.
 pub fn derive_historical_key(user_id: &str) -> Result<[u8; 32], String> {
     let secret = zeroize::Zeroizing::new(
         env::var("LATCH_OAUTH_SECRET").unwrap_or_else(|_| "latch-dev-secret-32bytes-long!!".into()),
