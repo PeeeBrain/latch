@@ -72,16 +72,7 @@ jobs:
       - name: Verify complete release and generate native updater feed
         run: python scripts/release.py manifest target/release-assets --repository "$GH_REPO"
       - name: Generate release notes from merged pull requests
-        shell: bash
-        run: |
-          set -euo pipefail
-          args=(-f "tag_name=$RELEASE_TAG")
-          if previous_tag=$(git describe --tags --abbrev=0 "$RELEASE_TAG^" 2>/dev/null); then
-            args+=(-f "previous_tag_name=$previous_tag")
-          fi
-          gh api "repos/$GH_REPO/releases/generate-notes" "${args[@]}" --jq .body > "$RUNNER_TEMP/release-notes.md"
-          printf '\n\n' >> "$RUNNER_TEMP/release-notes.md"
-          cat docs/release-notes.md >> "$RUNNER_TEMP/release-notes.md"
+        run: python scripts/release.py notes "$RELEASE_TAG" "$RUNNER_TEMP/release-notes.md" --repository "$GH_REPO"
       - name: Publish complete release
         shell: bash
         run: |

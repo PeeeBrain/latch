@@ -52,6 +52,21 @@ def asset_name(release_version, platform, suffix):
     return f"Latch_{release_version}_{platform}{suffix}"
 
 
+def write_release_notes(output, repository, tag):
+    previous = subprocess.run(
+        ["git", "describe", "--tags", "--abbrev=0", f"{tag}^"],
+        cwd=ROOT, text=True, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+        check=False,
+    )
+    command = ["gh", "api", f"repos/{repository}/releases/generate-notes", "-f", f"tag_name={tag}"]
+    if previous.returncode == 0:
+        command.extend(["-f", f"previous_tag_name={previous.stdout.strip()}"])
+    command.extend(["--jq", ".body"])
+    changelog = subprocess.check_output(command, text=True)
+    instructions = (ROOT / "docs/release-notes.md").read_text(encoding="utf-8")
+    output.write_text(changelog.rstrip() + "\n\n" + instructions, encoding="utf-8")
+
+
 def stage(source, destination, platform, release_version):
     destination.mkdir(parents=True, exist_ok=True)
     for _, pattern, suffix in FORMATS[platform.split("-")[0]]:
@@ -114,6 +129,10 @@ def main():
     commands = parser.add_subparsers(dest="command", required=True)
     validation = commands.add_parser("validate")
     validation.add_argument("tag")
+    notes = commands.add_parser("notes")
+    notes.add_argument("tag")
+    notes.add_argument("output", type=Path)
+    notes.add_argument("--repository", required=True)
     staging = commands.add_parser("stage")
     staging.add_argument("source", type=Path)
     staging.add_argument("destination", type=Path)
@@ -125,6 +144,8 @@ def main():
     release_version = version()
     if args.command == "validate":
         validate(args.tag, release_version)
+    elif args.command == "notes":
+        write_release_notes(args.output, args.repository, args.tag)
     elif args.command == "stage":
         stage(args.source, args.destination, args.platform, release_version)
     else:
