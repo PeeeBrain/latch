@@ -4,7 +4,6 @@ Latch now uses a native GPUI interface on Windows, macOS, and Linux.
 
 - Windows x64: download and run `Latch_0.3.0_windows-x86_64-setup.exe`.
 - macOS Apple Silicon: download `Latch_0.3.0_macos-aarch64.dmg` and copy Latch to Applications.
-- macOS Intel: use `Latch_0.3.0_macos-x86_64.dmg`.
 - Linux x64: download `Latch_0.3.0_linux-x86_64.AppImage`, give it executable permission, and launch it. Ubuntu 24.04 users can use `Latch_0.3.0_linux-x86_64.deb` instead.
 
 Checksums are in `SHA256SUMS`. Updater `.sig` and `.app.tar.gz` files are for in-app updates. Packages carry updater signatures but are not Windows Authenticode signed or Apple Developer ID signed/notarized, so the OS may require explicit approval before opening them.

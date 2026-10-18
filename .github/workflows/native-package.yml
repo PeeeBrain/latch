@@ -35,16 +35,13 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - os: windows-latest
+          - os: blacksmith-4vcpu-windows-2025
             platform: windows-x86_64
             formats: nsis
-          - os: macos-latest
+          - os: blacksmith-6vcpu-macos-latest
             platform: macos-aarch64
             formats: app,dmg
-          - os: macos-15-intel
-            platform: macos-x86_64
-            formats: app,dmg
-          - os: ubuntu-24.04
+          - os: blacksmith-4vcpu-ubuntu-2404
             platform: linux-x86_64
             formats: deb,appimage
     runs-on: ${{ matrix.os }}

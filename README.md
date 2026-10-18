@@ -79,7 +79,6 @@ Download installers from the [latest release](https://github.com/PeeeBrain/latch
 
 - Windows x64: run the `windows-x86_64-setup.exe` installer.
 - macOS Apple Silicon: open the `macos-aarch64.dmg` and drag Latch to Applications.
-- macOS Intel: use the `macos-x86_64.dmg`.
 - Linux x64: use the `linux-x86_64.AppImage`, run `chmod +x` on it, then launch it. Ubuntu 24.04 users can install the `linux-x86_64.deb` with `sudo apt install ./<downloaded-file>.deb`.
 
 The deb requires Ubuntu 24.04 or compatible runtime libraries. AppImage also requires compatible host Wayland and GPU drivers. SHA-256 hashes are in `SHA256SUMS`. The `.sig` files and `.app.tar.gz` downloads support the updater; macOS users should install from the DMG.

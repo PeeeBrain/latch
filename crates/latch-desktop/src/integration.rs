@@ -30,22 +30,14 @@ fn tray() -> Result<TrayIcon, String> {
     let quit = MenuItem::with_id("quit", "Quit Latch", true, None);
     menu.append_items(&[&show, &lock, &quit])
         .map_err(|e| e.to_string())?;
-    let mut rgba = Vec::with_capacity(32 * 32 * 4);
-    for y in 0..32 {
-        for x in 0..32 {
-            let mark = (8..12).contains(&x) && (6..26).contains(&y)
-                || (8..25).contains(&x) && (22..26).contains(&y);
-            rgba.extend_from_slice(if mark {
-                &[255, 255, 255, 255]
-            } else {
-                &[40, 80, 130, 255]
-            });
-        }
-    }
+    let image = image::load_from_memory(include_bytes!("../icons/icon.png"))
+        .map_err(|e| e.to_string())?
+        .resize_exact(32, 32, image::imageops::FilterType::Lanczos3)
+        .into_rgba8();
     TrayIconBuilder::new()
         .with_tooltip("Latch")
         .with_menu(Box::new(menu))
-        .with_icon(Icon::from_rgba(rgba, 32, 32).map_err(|e| e.to_string())?)
+        .with_icon(Icon::from_rgba(image.into_raw(), 32, 32).map_err(|e| e.to_string())?)
         .build()
         .map_err(|e| e.to_string())
 }

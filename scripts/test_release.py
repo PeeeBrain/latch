@@ -22,6 +22,44 @@ class ReleaseTests(unittest.TestCase):
     def git(self, *args):
         return subprocess.check_output(["git", "-C", str(self.root), *args], text=True).strip()
 
+    def test_release_notes_select_previous_tag_and_append_installation_notes(self):
+        self.git("init", "-b", "main")
+        self.git("-c", "user.name=Test", "-c", "user.email=test@example.com", "commit", "--allow-empty", "-m", "unreleased")
+        self.git("tag", "build-marker")
+        (self.root / "docs").mkdir()
+        instructions = "## Install\nKeep your vault backup.\n"
+        (self.root / "docs/release-notes.md").write_text(instructions, encoding="utf-8")
+        output = self.root / "notes.md"
+        changelog = "## What's Changed\n* Fix by @contributor in #1\n\nFull Changelog: compare\n"
+        for tag, previous in (("v0.2.6", None), ("v0.3.0", "v0.2.6")):
+            with self.subTest(tag=tag):
+                if previous:
+                    for ignored in ("v0.3.0-beta.1", "v1foo.2.3", "v01.2.3"):
+                        self.git("-c", "user.name=Test", "-c", "user.email=test@example.com", "commit", "--allow-empty", "-m", ignored)
+                        self.git("tag", ignored)
+                self.git("-c", "user.name=Test", "-c", "user.email=test@example.com", "commit", "--allow-empty", "-m", tag)
+                self.git("tag", tag)
+                with patch.object(release, "ROOT", self.root), patch.object(
+                    release.subprocess, "check_output", return_value=changelog
+                ) as api:
+                    release.write_release_notes(output, "PeeeBrain/latch", tag)
+                expected = ["gh", "api", "repos/PeeeBrain/latch/releases/generate-notes", "-f", f"tag_name={tag}"]
+                if previous:
+                    expected.extend(["-f", f"previous_tag_name={previous}"])
+                api.assert_called_once_with(expected + ["--jq", ".body"], text=True)
+                self.assertEqual(output.read_text(encoding="utf-8"), changelog.rstrip() + "\n\n" + instructions)
+
+    def test_release_notes_api_failure_does_not_write_publishable_notes(self):
+        self.git("init", "-b", "main")
+        self.git("-c", "user.name=Test", "-c", "user.email=test@example.com", "commit", "--allow-empty", "-m", "initial")
+        self.git("tag", "v0.3.0")
+        output = self.root / "notes.md"
+        with patch.object(release, "ROOT", self.root), patch.object(
+            release.subprocess, "check_output", side_effect=subprocess.CalledProcessError(1, "gh")
+        ), self.assertRaises(subprocess.CalledProcessError):
+            release.write_release_notes(output, "PeeeBrain/latch", "v0.3.0")
+        self.assertFalse(output.exists())
+
     def test_release_requires_matching_tag_at_checkout_on_main(self):
         self.git("init", "-b", "main")
         self.git("-c", "user.name=Test", "-c", "user.email=test@example.com", "commit", "--allow-empty", "-m", "main")
@@ -77,9 +115,9 @@ class ReleaseTests(unittest.TestCase):
         release.write_manifest(assets, "PeeeBrain/latch", "0.3.0", public_key)
         manifest = json.loads((assets / "native-latest.json").read_text())
         self.assertEqual(manifest["version"], "0.3.0")
-        self.assertEqual(set(manifest["platforms"]), {"windows-x86_64", "macos-aarch64", "macos-x86_64", "linux-x86_64"})
+        self.assertEqual(set(manifest["platforms"]), {"windows-x86_64", "macos-aarch64", "linux-x86_64"})
         self.assertEqual({platform: item["format"] for platform, item in manifest["platforms"].items()}, {
-            "windows-x86_64": "nsis", "macos-aarch64": "app", "macos-x86_64": "app", "linux-x86_64": "appimage",
+            "windows-x86_64": "nsis", "macos-aarch64": "app", "linux-x86_64": "appimage",
         })
         for item in manifest["platforms"].values():
             name = item["url"].split("/")[-1]

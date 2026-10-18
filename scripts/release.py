@@ -14,7 +14,7 @@ import tomllib
 
 
 ROOT = Path(__file__).resolve().parent.parent
-PLATFORMS = ("windows-x86_64", "macos-aarch64", "macos-x86_64", "linux-x86_64")
+PLATFORMS = ("windows-x86_64", "macos-aarch64", "linux-x86_64")
 # The first format is the one supported by cargo-packager-updater on that OS.
 FORMATS = {
     "windows": (("nsis", "*-setup.exe", "-setup.exe"),),
@@ -50,6 +50,33 @@ def validate(tag, release_version):
 
 def asset_name(release_version, platform, suffix):
     return f"Latch_{release_version}_{platform}{suffix}"
+
+
+def write_release_notes(output, repository, tag):
+    tags = subprocess.run(
+        ["git", "tag", "--list"], cwd=ROOT, text=True,
+        stdout=subprocess.PIPE, check=True,
+    ).stdout.splitlines()
+    matches = []
+    for candidate in tags:
+        if re.fullmatch(r"v(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)", candidate):
+            matches.extend(["--match", candidate])
+    previous_tag = None
+    if matches:
+        previous = subprocess.run(
+            ["git", "describe", "--tags", "--abbrev=0", *matches, f"{tag}^"],
+            cwd=ROOT, text=True, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+            check=False,
+        )
+        if previous.returncode == 0:
+            previous_tag = previous.stdout.strip()
+    command = ["gh", "api", f"repos/{repository}/releases/generate-notes", "-f", f"tag_name={tag}"]
+    if previous_tag is not None:
+        command.extend(["-f", f"previous_tag_name={previous_tag}"])
+    command.extend(["--jq", ".body"])
+    changelog = subprocess.check_output(command, text=True)
+    instructions = (ROOT / "docs/release-notes.md").read_text(encoding="utf-8")
+    output.write_text(changelog.rstrip() + "\n\n" + instructions, encoding="utf-8")
 
 
 def stage(source, destination, platform, release_version):
@@ -114,6 +141,10 @@ def main():
     commands = parser.add_subparsers(dest="command", required=True)
     validation = commands.add_parser("validate")
     validation.add_argument("tag")
+    notes = commands.add_parser("notes")
+    notes.add_argument("tag")
+    notes.add_argument("output", type=Path)
+    notes.add_argument("--repository", required=True)
     staging = commands.add_parser("stage")
     staging.add_argument("source", type=Path)
     staging.add_argument("destination", type=Path)
@@ -125,6 +156,8 @@ def main():
     release_version = version()
     if args.command == "validate":
         validate(args.tag, release_version)
+    elif args.command == "notes":
+        write_release_notes(args.output, args.repository, args.tag)
     elif args.command == "stage":
         stage(args.source, args.destination, args.platform, release_version)
     else:
