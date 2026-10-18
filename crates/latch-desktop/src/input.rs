@@ -104,12 +104,13 @@ impl TextInput {
         if self.masked {
             "•".repeat(self.content.encode_utf16().count()).into()
         } else {
-            self.content.to_string().into()
+            // Keep single-line shaping and byte offsets without changing the value.
+            self.content.replace(['\n', '\r'], " ").into()
         }
     }
     fn replace(&mut self, range: Range<usize>, text: &str) -> bool {
         if self.read_only
-            || text.contains(['\n', '\r'])
+            || (!self.secret && text.contains(['\n', '\r']))
             || self.content.len() - range.len() + text.len() > 4096
         {
             return false;
@@ -226,8 +227,7 @@ impl TextInput {
         };
         let text = Zeroizing::new(text);
         if self.secret {
-            // Secrets paste verbatim, tabs included; replace() refuses line
-            // breaks rather than silently rewriting them.
+            // Clipboard secrets bypass shortcut-character filtering.
             self.insert_verbatim(None, &text, cx);
         } else {
             self.insert_text(None, &text.replace("\n", " "), cx);
@@ -886,21 +886,27 @@ mod tests {
 
     #[gpui_kit::test]
     fn pasting_a_secret_keeps_it_exact(cx: &mut gpui_kit::TestAppContext) {
-        cx.update(|cx| cx.set_global(Palette::fallback(true)));
-        let window = cx.add_window(|_, cx| TextInput::new("Password", true, cx));
-        window
-            .update(cx, |input, window, cx| {
-                cx.write_to_clipboard(ClipboardItem::new_string("pass\tword".into()));
-                input.paste(&Paste, window, cx);
-                assert_eq!(input.value(), "pass\tword");
-                cx.write_to_clipboard(ClipboardItem::new_string("password\n".into()));
-                input.paste(&Paste, window, cx);
-                assert_eq!(
-                    input.value(),
-                    "pass\tword",
-                    "a line break is refused, not rewritten"
-                );
-            })
-            .unwrap();
+        cx.update(|cx| {
+            gpui_kit::init(cx);
+            cx.set_global(Palette::fallback(true));
+        });
+        let (input, cx) = cx.add_window_view(|_, cx| TextInput::new("Password", true, cx));
+        for secret in ["pass\tword", "pass\r\nword\n"] {
+            cx.update(|window, cx| {
+                input.update(cx, |input, cx| {
+                    input.set_value(String::new(), cx);
+                    cx.write_to_clipboard(ClipboardItem::new_string(secret.into()));
+                    input.paste(&Paste, window, cx);
+                    assert_eq!(input.value(), secret);
+                });
+            });
+            for masked in [true, false] {
+                cx.update(|window, cx| {
+                    input.update(cx, |input, cx| input.set_masked(masked, cx));
+                    window.draw(cx).clear(cx);
+                    assert_eq!(input.read(cx).value(), secret);
+                });
+            }
+        }
     }
 }
