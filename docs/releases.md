@@ -12,8 +12,8 @@ The release version comes from `crates/latch-desktop/Cargo.toml`. Keep `latch-co
    ```sh
    git switch main
    git pull --ff-only
-   git tag -a v0.3.0 -m "Latch 0.3.0"
-   git push origin v0.3.0
+   git tag -a v0.3.1 -m "Latch 0.3.1"
+   git push origin v0.3.1
    ```
 
 The workflow checks that the tag matches the Cargo version, resolves to the checkout, and is reachable from `origin/main`. Do not move published tags. The workflow never creates version commits or tags automatically. Maintainers can retry an existing tag with Release > Run workflow, using the same tag as input.

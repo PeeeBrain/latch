@@ -7,8 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.1] - 2026-10-18
+
+### Changed
+- Restore the original Latch logo for native app packages, Windows executables, and the tray.
+- Move native CI and release packaging to Blacksmith runners.
+- Support Apple Silicon macOS, Windows x64, and Linux x64; drop Intel macOS builds.
+- Generate release changelogs from merged pull requests and preserve installation guidance.
+- Remove the OpenCode workflow.
+
 ### Native release preparation
-- Prepare 0.3.0 as the native GPUI release for Windows, macOS, and Linux.
+- Release 0.3.1 as the native GPUI release for Windows, macOS, and Linux.
 - Replace Tauri release builds with tag-triggered native packaging, verified signatures, checksums, and a separate native updater feed.
 - Require manual installation when moving from Tauri; migrate Google vaults in the previous app first.
 - Remove the retired Tauri/React frontend, Bun tooling, OAuth configuration, and obsolete CI jobs.
