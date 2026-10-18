@@ -1,15 +1,21 @@
 use cargo_packager_updater::{Config, Update, UpdaterBuilder};
 use std::time::Duration;
 
-// Same public trust key as the migration host; never load a replacement key
+// Same public trust key as previous releases; never load a replacement key
 // from user settings or a remote manifest. Native and legacy feeds are separate.
-const PUBLIC_KEY: &str = "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEM5NEE2NkQxQjY5NUFFRkEKUldUNnJwVzIwV1pLeVRMQnVWTmNodW5Rck5WTHk3ektOYWZoZG5UaisyWUUyN3lscmZqcGFCYUsK";
+const PUBLIC_KEY: &str = include_str!("../updater.pub");
 const ENDPOINT: &str =
     "https://github.com/PeeeBrain/latch/releases/latest/download/native-latest.json";
 
 pub fn check() -> Result<Option<Update>, String> {
     if cfg!(debug_assertions) {
         return Err("Updates are available only in installed release packages.".into());
+    }
+    #[cfg(target_os = "linux")]
+    if std::env::var_os("APPIMAGE").is_none() {
+        return Err(
+            "In-app updates require the AppImage. For deb installations, download the latest deb from https://github.com/PeeeBrain/latch/releases/latest.".into(),
+        );
     }
     let version = semver::Version::parse(env!("CARGO_PKG_VERSION"))
         .map_err(|_| "Invalid application version")?;
@@ -18,7 +24,7 @@ pub fn check() -> Result<Option<Update>, String> {
         version,
         Config {
             endpoints: vec![endpoint],
-            pubkey: PUBLIC_KEY.into(),
+            pubkey: PUBLIC_KEY.trim().into(),
             windows: None,
         },
     )

@@ -1,24 +1,25 @@
 name: CI
 
 on:
+  workflow_dispatch:
   push:
     branches: [main]
     paths:
-      - 'frontend/**'
       - 'crates/**'
       - 'Cargo.toml'
       - 'Cargo.lock'
       - 'rust-toolchain.toml'
-      - '.github/workflows/ci.yml'
+      - '.github/workflows/**'
+      - 'scripts/**'
   pull_request:
     branches: [main]
     paths:
-      - 'frontend/**'
       - 'crates/**'
       - 'Cargo.toml'
       - 'Cargo.lock'
       - 'rust-toolchain.toml'
-      - '.github/workflows/ci.yml'
+      - '.github/workflows/**'
+      - 'scripts/**'
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
@@ -28,78 +29,18 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  frontend:
-    name: Frontend Checks
-    runs-on: blacksmith-4vcpu-ubuntu-2404
-
+  release-tooling:
+    name: Release tooling
+    runs-on: ubuntu-24.04
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v6
-
-      - name: Setup Bun
-        uses: oven-sh/setup-bun@v2
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
         with:
-          bun-version-file: frontend/package.json
-
-      - name: Install dependencies
-        working-directory: ./frontend
-        run: bun ci
-
-      - name: TypeScript type check
-        working-directory: ./frontend
-        run: bun run typecheck
-
-      - name: ESLint check
-        working-directory: ./frontend
-        run: bun run lint
-
-      - name: Frontend tests
-        working-directory: ./frontend
-        run: bun run test
-
-      - name: Build frontend
-        working-directory: ./frontend
-        run: bun run build
-
-  backend:
-    name: Backend Checks
-    runs-on: blacksmith-4vcpu-ubuntu-2404
-
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v6
-
-      - name: Install system dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y libwebkit2gtk-4.1-dev libgtk-3-dev libappindicator3-dev librsvg2-dev patchelf
-
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@1.98.1
-        with:
-          components: rustfmt, clippy
-
-      - name: Rust cache
-        uses: swatinem/rust-cache@v2
-        with:
-          workspaces: '. -> target'
-
-      - name: Check code formatting
-        working-directory: ./frontend/src-tauri
-        run: cargo fmt -p latch -- --check
-
-      - name: Run cargo check, test, and clippy
-        working-directory: ./frontend/src-tauri
-        env:
-          LATCH_OAUTH_SECRET: ${{ secrets.CI_LATCH_OAUTH_SECRET }}
-        run: |
-          cargo check --all-targets --locked
-          cargo test --all-targets --locked
-          cargo clippy --all-targets --all-features --locked -- -D warnings
-          cargo test -p latch-core --features legacy-oauth --locked
-          cargo clippy -p latch-core --all-targets --all-features --locked -- -D warnings
-        # NOTE: CI_LATCH_OAUTH_SECRET must be set as a GitHub Secret with >= 32 random bytes
-        # Generate with: openssl rand -hex 32
+          python-version: '3.13'
+      - name: Install signature verifier
+        run: sudo apt-get update && sudo apt-get install -y minisign
+      - name: Release contract tests
+        run: python -m unittest discover -s scripts -p 'test_*.py' -v
 
   native:
     name: Native Rust (${{ matrix.os }})
@@ -130,8 +71,12 @@ jobs:
         run: cargo test -p latch-core --locked
       - name: Native flow tests
         run: cargo test -p latch-desktop --locked
+      - name: Historical vault compatibility tests
+        run: cargo test -p latch-core --features legacy-oauth --locked
       - name: Strict Clippy
         run: cargo clippy -p latch-core -p latch-desktop --all-targets --locked -- -D warnings
+      - name: Strict compatibility Clippy
+        run: cargo clippy -p latch-core --all-targets --all-features --locked -- -D warnings
       - name: Build review executable on CI
         run: cargo build -p latch-desktop --release --locked
       - name: Upload review executable

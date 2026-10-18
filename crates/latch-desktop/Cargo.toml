@@ -1,6 +1,6 @@
 [package]
 name = "latch-desktop"
-version = "0.2.6"
+version = "0.3.0"
 edition = "2024"
 license = "MIT"
 publish = false
@@ -13,7 +13,7 @@ publisher = "Latch"
 description = "Local encrypted password manager"
 homepage = "https://github.com/PeeeBrain/latch"
 out-dir = "../../target/native-packages"
-icons = ["../../frontend/src-tauri/icons/icon.png", "../../frontend/src-tauri/icons/icon.ico", "../../frontend/src-tauri/icons/icon.icns"]
+icons = ["icons/icon.png", "icons/icon.ico", "icons/icon.icns"]
 
 [package.metadata.packager.appimage]
 # Mesa drivers load the host Wayland ABI; bundling an older copy breaks newer GPUs.

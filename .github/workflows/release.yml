@@ -1,97 +1,83 @@
-name: Release Build
+name: Release
 
 on:
   push:
-    tags:
-      - 'v*'
+    tags: ['v*']
   workflow_dispatch:
     inputs:
       tag:
-        description: Existing version tag to release, for example v0.2.5
+        description: Existing tag on main to retry, for example v0.3.0
         required: true
         type: string
 
 permissions:
-  contents: write
+  contents: read
 
 concurrency:
   group: release-${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+  cancel-in-progress: false
 
 jobs:
-  release:
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - platform: 'macos-latest'
-            args: '--target aarch64-apple-darwin'
-          - platform: 'macos-latest'
-            args: '--target x86_64-apple-darwin'
-          - platform: 'blacksmith-4vcpu-windows-2025'
-            args: ''
-
-    runs-on: ${{ matrix.platform }}
+  validate:
+    runs-on: ubuntu-24.04
+    outputs:
+      tag: ${{ steps.version.outputs.tag }}
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v6
+      - uses: actions/checkout@v6
         with:
           ref: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref }}
-
-      - name: Setup Bun
-        uses: oven-sh/setup-bun@v2
+          fetch-depth: 0
+      - uses: actions/setup-python@v6
         with:
-          bun-version-file: frontend/package.json
-
-      - name: Verify release tag
+          python-version: '3.13'
+      - name: Verify tag, Cargo version, and main ancestry
+        id: version
         env:
           RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
-        run: bun -e 'const config = await Bun.file("frontend/src-tauri/tauri.conf.json").json(); const expected = `v${config.version}`; if (process.env.RELEASE_TAG !== expected) { console.error(`Expected tag ${expected}, got ${process.env.RELEASE_TAG}`); process.exit(1); }'
+        run: |
+          python scripts/release.py validate "$RELEASE_TAG"
+          echo "tag=$RELEASE_TAG" >> "$GITHUB_OUTPUT"
 
-      - name: Install Rust stable
-        uses: dtolnay/rust-toolchain@1.98.1
+  package:
+    needs: validate
+    uses: ./.github/workflows/native-package.yml
+    with:
+      release-tag: ${{ needs.validate.outputs.tag }}
+    secrets: inherit
+
+  publish:
+    needs: [validate, package]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      RELEASE_TAG: ${{ needs.validate.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v6
         with:
-          targets: ${{ matrix.platform == 'macos-latest' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
-
-      - name: Rust cache
-        uses: swatinem/rust-cache@v2
+          ref: ${{ needs.validate.outputs.tag }}
+      - uses: actions/setup-python@v6
         with:
-          workspaces: '. -> target'
-
-      - name: Install frontend dependencies
-        working-directory: frontend
-        run: bun ci
-
-      - name: Decode signing key
+          python-version: '3.13'
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: native-*
+          path: target/release-assets
+          merge-multiple: true
+      - name: Install signature verifier
+        run: sudo apt-get update && sudo apt-get install -y minisign
+      - name: Verify complete release and generate native updater feed
+        run: python scripts/release.py manifest target/release-assets --repository "$GH_REPO"
+      - name: Publish complete release
         shell: bash
         run: |
-          echo "${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}" | base64 -d > "$RUNNER_TEMP/signing.key"
-
-      - name: Build and release
-        uses: tauri-apps/tauri-action@v0
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          TAURI_SIGNING_PRIVATE_KEY: ${{ runner.temp }}/signing.key
-          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-        with:
-          projectPath: frontend
-          tagName: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
-          releaseName: Latch ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
-          releaseBody: 'See the assets to download this version and install.'
-          releaseDraft: false
-          prerelease: false
-          args: ${{ matrix.args }}
-
-      - name: Upload updater artifacts
-        shell: bash
-        run: |
-          # Find and upload the updater JSON files
-          if [ -d "target/updater" ]; then
-            for platform_json in target/updater/*.json; do
-              if [ -f "$platform_json" ]; then
-                platform_name=$(basename "$platform_json" .json)
-                gh release upload "${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}" "$platform_json" --repo ${{ github.repository }}
-              fi
-            done
+          set -euo pipefail
+          if gh release view "$RELEASE_TAG" --json isDraft > "$RUNNER_TEMP/release.json"; then
+            python -c 'import json,sys; assert json.load(open(sys.argv[1]))["isDraft"], "Refusing to overwrite a published release"' "$RUNNER_TEMP/release.json"
+            gh release delete "$RELEASE_TAG" --yes
           fi
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          gh release create "$RELEASE_TAG" target/release-assets/* \
+            --verify-tag --draft --title "Latch $RELEASE_TAG" --notes-file docs/release-notes.md
+          gh release edit "$RELEASE_TAG" --draft=false --latest

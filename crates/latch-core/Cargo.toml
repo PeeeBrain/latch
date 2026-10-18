@@ -1,12 +1,12 @@
 [package]
 name = "latch-core"
-version = "0.2.6"
+version = "0.3.0"
 edition = "2021"
 license = "MIT"
 publish = false
 
 [features]
-# Only the old Tauri host enables this while existing vaults are migrated.
+# Historical vault compatibility tests; never enabled by the native app.
 legacy-oauth = ["dep:jsonwebtoken"]
 
 [dependencies]

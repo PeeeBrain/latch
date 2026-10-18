@@ -4,9 +4,6 @@ on:
   push:
     branches: [main, develop]
     paths:
-      - 'frontend/package.json'
-      - 'frontend/bun.lock'
-      - 'frontend/src-tauri/Cargo.toml'
       - 'crates/**/Cargo.toml'
       - 'Cargo.toml'
       - 'Cargo.lock'
@@ -14,9 +11,6 @@ on:
   pull_request:
     branches: [main, develop]
     paths:
-      - 'frontend/package.json'
-      - 'frontend/bun.lock'
-      - 'frontend/src-tauri/Cargo.toml'
       - 'crates/**/Cargo.toml'
       - 'Cargo.toml'
       - 'Cargo.lock'
@@ -42,12 +36,3 @@ jobs:
 
       - name: Run Cargo audit
         run: cargo audit
-
-      - name: Setup Bun
-        uses: oven-sh/setup-bun@v2
-        with:
-          bun-version-file: frontend/package.json
-
-      - name: Run frontend audit
-        working-directory: ./frontend
-        run: bun audit --audit-level=high

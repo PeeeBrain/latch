@@ -2,11 +2,25 @@ name: Native GPUI packages
 
 on:
   workflow_dispatch:
+    inputs:
+      sign:
+        description: Sign and verify release assets without publishing a release
+        type: boolean
+        default: false
+  workflow_call:
+    inputs:
+      release-tag:
+        type: string
+        default: ''
   pull_request:
     paths:
       - '.github/workflows/native-package.yml'
-      - 'crates/latch-desktop/Cargo.toml'
-      - 'frontend/src-tauri/icons/**'
+      - '.github/workflows/release.yml'
+      - 'scripts/release.py'
+      - 'crates/**'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - 'rust-toolchain.toml'
 
 permissions:
   contents: read
@@ -18,16 +32,25 @@ jobs:
       matrix:
         include:
           - os: windows-latest
+            platform: windows-x86_64
             formats: nsis
           - os: macos-latest
+            platform: macos-aarch64
             formats: app,dmg
           - os: macos-15-intel
+            platform: macos-x86_64
             formats: app,dmg
           - os: ubuntu-24.04
+            platform: linux-x86_64
             formats: deb,appimage
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.release-tag || github.sha }}
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.13'
       - uses: dtolnay/rust-toolchain@1.98.1
       - uses: swatinem/rust-cache@v2
         with:
@@ -44,16 +67,32 @@ jobs:
         run: cargo build -p latch-desktop --release --locked
       - name: Install pinned packaging tool
         run: cargo install cargo-packager --version 0.11.8 --locked
-      - name: Package native application
+      - name: Package review application
+        if: inputs.release-tag == '' && !inputs.sign
         working-directory: crates/latch-desktop
         run: cargo packager --release --formats ${{ matrix.formats }}
+      - name: Package and sign release
+        if: inputs.release-tag != '' || inputs.sign
+        working-directory: crates/latch-desktop
+        shell: bash
+        env:
+          # Retain the existing secret names and trust key for native updates.
+          ENCODED_SIGNING_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          CARGO_PACKAGER_SIGN_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          test -n "$ENCODED_SIGNING_KEY" || { echo 'Missing updater signing key'; exit 1; }
+          # The existing secret wraps the base64 Minisign key in another base64 layer.
+          python -c 'import base64,os,pathlib; pathlib.Path(os.environ["RUNNER_TEMP"], "updater.key").write_bytes(base64.b64decode("".join(os.environ["ENCODED_SIGNING_KEY"].split()), validate=True).strip())'
+          export CARGO_PACKAGER_SIGN_PRIVATE_KEY="$RUNNER_TEMP/updater.key"
+          trap 'rm -f "$CARGO_PACKAGER_SIGN_PRIVATE_KEY"' EXIT
+          cargo packager --release --formats ${{ matrix.formats }}
+      - name: Stage versioned release downloads
+        if: inputs.release-tag != '' || inputs.sign
+        run: python scripts/release.py stage target/native-packages target/release-assets --platform ${{ matrix.platform }}
       - uses: actions/upload-artifact@v4
         with:
-          name: native-${{ runner.os }}-${{ runner.arch }}
-          path: target/native-packages/**
+          name: native-${{ matrix.platform }}
+          path: ${{ (inputs.release-tag != '' || inputs.sign) && 'target/release-assets/*' || 'target/native-packages/**' }}
           if-no-files-found: error
           retention-days: 14
-
-# This produces review artifacts only. Stable publication remains gated on OS
-# signing, installer continuity, device-key tests and the legacy OAuth bridge.
-# The existing Tauri updater feed must never serve these unvalidated packages.
