@@ -53,6 +53,20 @@ fn muted(p: &Palette, text: impl Into<SharedString>) -> gpui_kit::Div {
 }
 
 impl Latch {
+    fn credential_tile(&self, p: &Palette, title: &str, url: Option<&str>, size: f32) -> Div {
+        let image = crate::favicon::origin(url)
+            .and_then(|origin| self.favicons.get(&origin))
+            .and_then(Option::as_ref);
+        let tile = match image {
+            Some(image) => ui::tile(p, img(image.clone()).size(px(size - 8.)), None),
+            None => ui::tile(p, initial(title), Some(title_tint(title))),
+        };
+        tile.size(px(size))
+            .rounded(px(size / 4.))
+            .text_size(px(if size > 24. { 16. } else { 13. }))
+            .font_weight(FontWeight::SEMIBOLD)
+    }
+
     /// Registers an element as the page's next keyboard stop.
     pub(super) fn stop(&self, id: &ElementId, cx: &mut Context<Self>) -> FocusHandle {
         let handle = self.stop_handle(id.clone(), cx);
@@ -628,8 +642,7 @@ impl Latch {
             let row = self
                 .row(
                     ("entry", index),
-                    ui::tile(p, initial(&entry.title), Some(title_tint(&entry.title)))
-                        .font_weight(FontWeight::SEMIBOLD),
+                    self.credential_tile(p, &entry.title, entry.url.as_deref(), 24.),
                     entry.title.clone(),
                     Some(entry.username.clone().into()),
                     index == self.selected,
@@ -744,13 +757,7 @@ impl Latch {
                 .px(px(8.))
                 .pt(px(8.))
                 .pb(px(6.))
-                .child(
-                    ui::tile(p, initial(&entry.title), Some(title_tint(&entry.title)))
-                        .size(px(38.))
-                        .rounded(px(10.))
-                        .text_size(px(16.))
-                        .font_weight(FontWeight::SEMIBOLD),
-                )
+                .child(self.credential_tile(p, &entry.title, entry.url.as_deref(), 38.))
                 .child(
                     div()
                         .flex_1()

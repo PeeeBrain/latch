@@ -57,12 +57,15 @@ mod tests {
 
     #[test]
     fn preview_exposes_totp_presence_without_the_secret() {
-        let mut workspace = workspace_with(entry(Some("GEZDGNBVGY3TQOJQ".to_string())));
+        let mut credential = entry(Some("GEZDGNBVGY3TQOJQ".to_string()));
+        credential.url = Some("https://example.com/login".into());
+        let mut workspace = workspace_with(credential);
 
         let results = search(&mut workspace, "").unwrap();
 
         assert_eq!(results.len(), 1);
         assert!(results[0].has_totp);
+        assert_eq!(results[0].url.as_deref(), Some("https://example.com/login"));
         let json = serde_json::to_string(&results[0]).unwrap();
         assert!(!json.contains("GEZDGNBVGY3TQOJQ"));
         assert!(!json.contains("totp_secret"));

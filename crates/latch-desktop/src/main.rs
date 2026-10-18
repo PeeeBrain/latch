@@ -2,6 +2,7 @@
 mod app;
 mod biometric;
 mod clipboard;
+mod favicon;
 mod input;
 mod integration;
 mod theme;

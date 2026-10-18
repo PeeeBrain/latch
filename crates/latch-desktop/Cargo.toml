@@ -35,7 +35,9 @@ serde_json = { version = "1", features = ["preserve_order"] }
 jsonc-parser = { version = "0.33", features = ["serde"] }
 tempfile = "3"
 raw-window-handle = "0.6"
-tokio = { version = "1", features = ["rt", "time"] }
+image = { version = "0.25", default-features = false, features = ["ico", "png"] }
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"] }
+tokio = { version = "1", features = ["rt", "time", "net", "sync"] }
 global-hotkey = "0.8"
 cargo-packager-updater = "=0.2.3"
 semver = "1"

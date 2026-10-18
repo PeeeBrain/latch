@@ -196,6 +196,9 @@ pub struct Latch {
     shown: Page,
     palette_scroll: ScrollHandle,
     previews: Vec<EntryPreview>,
+    favicons: std::collections::HashMap<url::Url, Option<Arc<RenderImage>>>,
+    favicon_requests: usize,
+    favicon_cancel: tokio::sync::watch::Sender<()>,
     selected: usize,
     scroll: ScrollHandle,
     editing: Option<String>,
@@ -277,6 +280,9 @@ impl Latch {
             shown: Page::Locked,
             palette_scroll: ScrollHandle::new(),
             previews: vec![],
+            favicons: Default::default(),
+            favicon_requests: 0,
+            favicon_cancel: tokio::sync::watch::channel(()).0,
             selected: 0,
             scroll: ScrollHandle::new(),
             editing: None,
@@ -458,6 +464,7 @@ impl Latch {
                         if this.last_query != this.query.read(cx).value() {
                             this.search(this.query.read(cx).value().to_owned(), cx);
                         }
+                        this.load_favicons(cx);
                     }
                     Ok(Reply::Detail(entry)) => {
                         this.fields.clear();
@@ -518,6 +525,47 @@ impl Latch {
         })
         .detach();
         cx.notify();
+    }
+    fn load_favicons(&mut self, cx: &mut Context<Self>) {
+        let origins: Vec<_> = self
+            .previews
+            .iter()
+            .take(self.shown_previews(cx))
+            .filter_map(|entry| crate::favicon::origin(entry.url.as_deref()))
+            .filter(|url| !self.favicons.contains_key(url))
+            .take(crate::favicon::MAX_CONCURRENT.saturating_sub(self.favicon_requests))
+            .collect();
+        for url in origins {
+            if self.favicons.len() >= crate::favicon::MAX_CACHED {
+                break;
+            }
+            if self.favicons.contains_key(&url) {
+                continue;
+            }
+            // Pending and unavailable icons both retain the initial tile. Cache
+            // failures too so typing and rendering never retry the same domain.
+            self.favicons.insert(url.clone(), None);
+            self.favicon_requests += 1;
+            let cancel = self.favicon_cancel.subscribe();
+            let generation = self.epoch.load(Ordering::SeqCst);
+            let source = url.clone();
+            let task = cx
+                .background_executor()
+                .spawn(async move { crate::favicon::load(source, cancel) });
+            cx.spawn(async move |view, cx| {
+                let image = task.await;
+                let _ = view.update(cx, |this, cx| {
+                    if this.epoch.load(Ordering::SeqCst) != generation {
+                        return;
+                    }
+                    this.favicon_requests -= 1;
+                    this.favicons.insert(url, image);
+                    this.load_favicons(cx);
+                    cx.notify();
+                });
+            })
+            .detach();
+        }
     }
     fn search(&mut self, query: String, cx: &mut Context<Self>) {
         self.last_query = query.clone();
@@ -724,6 +772,9 @@ impl Latch {
         self.busy = self.installing;
         self.fields.clear();
         self.previews.clear();
+        self.favicon_cancel.send_replace(());
+        self.favicons.clear();
+        self.favicon_requests = 0;
         self.detail = None;
         self.editing = None;
         self.issues.clear();
@@ -1647,6 +1698,54 @@ mod tests {
     use super::{Latch, Page, Submit};
     use gpui_kit::{Focusable, TestAppContext};
     use latch_core::vault::storage::VaultStorage;
+
+    #[gpui_kit::test]
+    fn locking_cancels_and_discards_pending_favicons(cx: &mut TestAppContext) {
+        let directory = tempfile::tempdir().unwrap();
+        cx.update(gpui_kit::init);
+        let window = cx.add_window(|window, cx| {
+            Latch::new(
+                VaultStorage {
+                    path: directory.path().join("vault.enc"),
+                },
+                window,
+                cx,
+            )
+        });
+        window
+            .update(cx, |this, window, cx| {
+                this.page = Page::Browse;
+                for id in ["one", "two"] {
+                    this.previews.push(latch_core::vault::EntryPreview {
+                        id: id.into(),
+                        title: "Example".into(),
+                        username: "user".into(),
+                        url: Some("https://example.com/login".into()),
+                        icon_url: Some("https://icons.duckduckgo.com/ip3/example.com.ico".into()),
+                        has_totp: false,
+                    });
+                }
+                this.load_favicons(cx);
+                this.load_favicons(cx);
+                assert_eq!(this.favicon_requests, 1, "same-origin requests are shared");
+                let canceled = this.favicon_cancel.subscribe();
+                this.lock(window, cx);
+                assert!(canceled.has_changed().unwrap());
+                assert!(this.favicons.is_empty());
+            })
+            .unwrap();
+        cx.run_until_parked();
+        window
+            .update(cx, |this, _, _| {
+                assert!(this.page == Page::Locked);
+                assert!(
+                    this.favicons.is_empty(),
+                    "a late result must not repopulate the cache"
+                );
+                assert_eq!(this.favicon_requests, 0);
+            })
+            .unwrap();
+    }
 
     #[gpui_kit::test]
     fn lock_after_setup_commits_can_unlock_the_created_vault(cx: &mut TestAppContext) {

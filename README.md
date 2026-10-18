@@ -51,6 +51,8 @@ Native access supports a master password and device-key access through Windows H
 
 The vault locks after 30 minutes of inactivity. Copied secrets clear after 30 seconds if Latch still owns that clipboard content. On Windows/macOS, closing the window locks the vault and hides it to the tray when tray initialization succeeds. On Linux, closing quits the app.
 
+Credential rows and details load favicons directly from the saved website's HTTPS `/favicon.ico`, including redirects to public HTTPS image hosts. Latch strips the saved URL's path and query, sends no vault credentials or cookies, and uses no third-party favicon service. Icons and failed lookups stay in memory until lock. Missing URLs, unavailable icons, and private-network sites keep their initial tile. Requests bypass system proxies so destination checks apply to the actual connection. Sites that require a proxy or only declare icons in HTML keep their initial tile too.
+
 ## Appearance
 
 Open Settings, then Appearance to import a T3 Code, VS Code, or Zed theme, or editor `settings.json` color overrides. Latch keeps supported colors, previews them before applying, and converts imported themes into editor settings. Light/dark variants follow the OS appearance.

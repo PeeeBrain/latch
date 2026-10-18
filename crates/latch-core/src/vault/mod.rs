@@ -33,6 +33,8 @@ pub struct EntryPreview {
     pub id: String,
     pub title: String,
     pub username: String,
+    #[serde(default)]
+    pub url: Option<String>,
     pub icon_url: Option<String>,
     pub has_totp: bool,
 }
@@ -43,6 +45,7 @@ impl From<&Entry> for EntryPreview {
             id: entry.id.clone(),
             title: entry.title.clone(),
             username: entry.username.clone(),
+            url: entry.url.clone(),
             icon_url: entry.icon_url.clone(),
             has_totp: entry.totp_secret.is_some(),
         }
