@@ -145,4 +145,4 @@ jobs:
           CACHE_HIT: ${{ steps.cache.outputs.cache-hit }}
           SAVE_CACHE: ${{ inputs.save-cache }}
         run: |
-          printf '### Native cache\n\nExact hit: `%s`\n\nWriter enabled: `%s`\n' "$CACHE_HIT" "$SAVE_CACHE" >> "$GITHUB_STEP_SUMMARY"
+          printf '### Native cache\n\nExact hit: %s\n\nWriter enabled: %s\n' "$CACHE_HIT" "$SAVE_CACHE" >> "$GITHUB_STEP_SUMMARY"
