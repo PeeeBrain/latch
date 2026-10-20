@@ -137,7 +137,7 @@ const COMMANDS: [Command; 9] = [
         "edit",
         "Edit selected credential",
         ui::Icon::Pencil,
-        Some("secondary-e"),
+        Some("secondary-shift-e"),
         false,
     ),
     command(
@@ -581,6 +581,7 @@ impl Latch {
     fn import_appearance(&mut self, cx: &mut Context<Self>) {
         let epoch = self.epoch.load(Ordering::SeqCst);
         let page = self.page.clone();
+        let focus = self.focus.clone();
         let picker = cx.prompt_for_paths(PathPromptOptions {
             files: true,
             directories: false,
@@ -592,32 +593,44 @@ impl Latch {
                 Ok(Ok(Some(paths))) => paths.into_iter().next(),
                 _ => None,
             };
-            let Some(path) = path else { return; };
-            let result = cx.background_executor().spawn(async move {
-                let text = theme::read(&path)?;
-                // The file's own shape decides the format; the first that
-                // yields colors wins, otherwise the first parse error is shown.
-                let mut first_error = None;
-                for source in [Source::VsCode, Source::Zed] {
-                    match Appearance::parse(&text, source) {
-                        Ok(appearance) if [true, false].into_iter().any(|dark|
-                            appearance.palette(dark).is_ok_and(|(_, count)| count > 0)) => return Ok(Some(appearance)),
-                        Ok(_) => {}
-                        Err(error) => { first_error.get_or_insert(error); }
+            let result = match path {
+                Some(path) => Some(cx.background_executor().spawn(async move {
+                    let text = theme::read(&path)?;
+                    // The file's own shape decides the format; the first that
+                    // yields colors wins, otherwise the first parse error is shown.
+                    let mut first_error = None;
+                    for source in [Source::VsCode, Source::Zed] {
+                        match Appearance::parse(&text, source) {
+                            Ok(appearance) if [true, false].into_iter().any(|dark|
+                                appearance.palette(dark).is_ok_and(|(_, count)| count > 0)) => return Ok(Some(appearance)),
+                            Ok(_) => {}
+                            Err(error) => { first_error.get_or_insert(error); }
+                        }
                     }
-                }
-                first_error.map_or(Ok(None), Err)
-            }).await;
+                    first_error.map_or(Ok(None), Err)
+                }).await),
+                None => None,
+            };
             view.update(cx, |this, cx| {
                 if this.epoch.load(Ordering::SeqCst) != epoch || this.page != page { return; }
+                // The native dialog takes the window's focus with it; take it
+                // back once the page settles so the keyboard keeps working.
+                let window = this.window;
+                cx.defer(move |cx| {
+                    let _ = cx.update_window(window, |_, window, cx| {
+                        window.activate_window();
+                        window.focus(&focus, cx);
+                    });
+                });
                 match result {
-                    Ok(Some(appearance)) => {
+                    None => {}
+                    Some(Ok(Some(appearance))) => {
                         this.preview = Some(appearance);
                         this.page = Page::Preview;
                         this.notice = "Previewing. Press Enter to apply or Esc to cancel.".into();
                     }
-                    Ok(None) => this.notice = "No colors Latch can use. Choose a T3 Code, VS Code or Zed theme file, or a settings.json with color overrides.".into(),
-                    Err(error) => this.notice = error,
+                    Some(Ok(None)) => this.notice = "No colors Latch can use. Choose a T3 Code, VS Code or Zed theme file, or a settings.json with color overrides.".into(),
+                    Some(Err(error)) => this.notice = error,
                 }
                 cx.notify();
             }).ok();
@@ -878,7 +891,17 @@ impl Latch {
     }
     fn move_selection(&mut self, step: isize, window: &mut Window, cx: &mut Context<Self>) {
         match self.page {
-            Page::Actions => self.cycle_palette(window, cx, step),
+            Page::Actions => {
+                // The filter already highlights the first row as Enter's
+                // target, so Down from it lands on the second row.
+                let filter = self.action_query.read(cx).focus_handle(cx);
+                let step = if step > 0 && filter.is_focused(window) {
+                    2
+                } else {
+                    step
+                };
+                self.cycle_palette(window, cx, step)
+            }
             Page::Browse => {
                 let last = self.rows(cx).saturating_sub(1);
                 self.selected = self.selected.saturating_add_signed(step).min(last);
@@ -928,12 +951,13 @@ impl Latch {
         *length = length.saturating_add_signed(step).clamp(8, 128);
         self.regenerate(cx);
     }
-    fn apply_appearance(&mut self, cx: &mut Context<Self>) {
+    fn apply_appearance(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(preview) = self.preview.take() {
             match preview.save(&self.appearance_directory) {
                 Ok(()) => {
                     self.appearance = Some(preview);
                     self.page = Page::Appearance;
+                    window.focus(&self.focus, cx);
                     self.notice = "Appearance saved".into();
                 }
                 Err(error) => {
@@ -1243,7 +1267,7 @@ impl Latch {
                 }
             }
             Page::Generator => self.use_generated(window, cx),
-            Page::Preview => self.apply_appearance(cx),
+            Page::Preview => self.apply_appearance(window, cx),
             Page::Discard => {
                 self.page = Page::Browse;
                 self.fields.clear();
@@ -1334,6 +1358,7 @@ impl Latch {
         if matches!(self.page, Page::Preview | Page::Appearance) {
             self.preview = None;
             self.page = Page::Settings;
+            window.focus(&self.focus, cx);
             cx.notify();
             return;
         }
@@ -1711,8 +1736,8 @@ pub fn init(cx: &mut App) {
         KeyBinding::new("shift-tab", TabPrevious, Some("Latch")),
         KeyBinding::new("ctrl-n", Add, Some("Latch")),
         KeyBinding::new("cmd-n", Add, Some("Latch")),
-        KeyBinding::new("ctrl-e", Edit, Some("Latch")),
-        KeyBinding::new("cmd-e", Edit, Some("Latch")),
+        KeyBinding::new("ctrl-shift-e", Edit, Some("Latch")),
+        KeyBinding::new("cmd-shift-e", Edit, Some("Latch")),
         KeyBinding::new("ctrl-l", Lock, Some("Latch")),
         KeyBinding::new("cmd-l", Lock, Some("Latch")),
         KeyBinding::new("ctrl-k", Actions, Some("Latch")),
@@ -2160,7 +2185,7 @@ mod tests {
                     }
                 });
                 compose(filter, &format!("Example {method}"), cx);
-                cx.simulate_keystrokes("ctrl-e");
+                cx.simulate_keystrokes("ctrl-shift-e");
                 cx.update(|window, cx| window.draw(cx).clear(cx));
             } else {
                 cx.simulate_keystrokes("ctrl-k");

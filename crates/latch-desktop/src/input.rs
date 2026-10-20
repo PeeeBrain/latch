@@ -22,6 +22,10 @@ gpui_kit::actions!(
         Right,
         SelectLeft,
         SelectRight,
+        WordLeft,
+        WordRight,
+        SelectWordLeft,
+        SelectWordRight,
         SelectAll,
         Home,
         End,
@@ -147,6 +151,43 @@ impl TextInput {
 
     fn select_right(&mut self, _: &SelectRight, _: &mut Window, cx: &mut Context<Self>) {
         self.select_to(self.next_boundary(self.cursor_offset()), cx);
+    }
+
+    /// Start of the previous word, or end of the next. Masked values jump to
+    /// the ends so word structure never leaks.
+    fn word_boundary(&self, forward: bool) -> usize {
+        let cursor = self.cursor_offset();
+        let words = self.content.unicode_word_indices();
+        if self.masked {
+            if forward { self.content.len() } else { 0 }
+        } else if forward {
+            words
+                .map(|(start, word)| start + word.len())
+                .find(|&end| end > cursor)
+                .unwrap_or(self.content.len())
+        } else {
+            words
+                .rev()
+                .map(|(start, _)| start)
+                .find(|&start| start < cursor)
+                .unwrap_or(0)
+        }
+    }
+
+    fn word_left(&mut self, _: &WordLeft, _: &mut Window, cx: &mut Context<Self>) {
+        self.move_to(self.word_boundary(false), cx);
+    }
+
+    fn word_right(&mut self, _: &WordRight, _: &mut Window, cx: &mut Context<Self>) {
+        self.move_to(self.word_boundary(true), cx);
+    }
+
+    fn select_word_left(&mut self, _: &SelectWordLeft, _: &mut Window, cx: &mut Context<Self>) {
+        self.select_to(self.word_boundary(false), cx);
+    }
+
+    fn select_word_right(&mut self, _: &SelectWordRight, _: &mut Window, cx: &mut Context<Self>) {
+        self.select_to(self.word_boundary(true), cx);
     }
 
     fn select_all(&mut self, _: &SelectAll, _: &mut Window, cx: &mut Context<Self>) {
@@ -767,6 +808,10 @@ impl Render for TextInput {
             .on_action(cx.listener(Self::right))
             .on_action(cx.listener(Self::select_left))
             .on_action(cx.listener(Self::select_right))
+            .on_action(cx.listener(Self::word_left))
+            .on_action(cx.listener(Self::word_right))
+            .on_action(cx.listener(Self::select_word_left))
+            .on_action(cx.listener(Self::select_word_right))
             .on_action(cx.listener(Self::select_all))
             .on_action(cx.listener(Self::home))
             .on_action(cx.listener(Self::end))
@@ -819,6 +864,14 @@ pub fn init(cx: &mut App) {
         KeyBinding::new("right", Right, Some("TextInput")),
         KeyBinding::new("shift-left", SelectLeft, Some("TextInput")),
         KeyBinding::new("shift-right", SelectRight, Some("TextInput")),
+        KeyBinding::new("ctrl-left", WordLeft, Some("TextInput")),
+        KeyBinding::new("ctrl-right", WordRight, Some("TextInput")),
+        KeyBinding::new("alt-left", WordLeft, Some("TextInput")),
+        KeyBinding::new("alt-right", WordRight, Some("TextInput")),
+        KeyBinding::new("ctrl-shift-left", SelectWordLeft, Some("TextInput")),
+        KeyBinding::new("ctrl-shift-right", SelectWordRight, Some("TextInput")),
+        KeyBinding::new("alt-shift-left", SelectWordLeft, Some("TextInput")),
+        KeyBinding::new("alt-shift-right", SelectWordRight, Some("TextInput")),
         KeyBinding::new("home", Home, Some("TextInput")),
         KeyBinding::new("end", End, Some("TextInput")),
         KeyBinding::new("ctrl-a", SelectAll, Some("TextInput")),
