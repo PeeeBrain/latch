@@ -11,6 +11,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Update GPUI Kit to 0.7.3 and refresh native dependencies.
 - Update the JWT library used by historical Vault compatibility tests and select its crypto backend explicitly.
 
+### Fixed
+- Rows, the back button, and footer links now show feedback the moment they are pressed.
+- Credential initials stay legible on light themes.
+- The credential details page no longer repaints every second unless a one-time code is counting down.
+
 ## [0.3.1] - 2026-10-18
 
 ### Changed
