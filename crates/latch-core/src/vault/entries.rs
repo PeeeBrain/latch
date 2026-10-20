@@ -101,7 +101,11 @@ fn validate(entry: &mut Entry) -> Result<(), String> {
         .filter(|value| !value.is_empty())
     {
         let parsed = match url::Url::parse(value) {
-            Err(url::ParseError::RelativeUrlWithoutBase) => {
+            Err(url::ParseError::RelativeUrlWithoutBase)
+                if !value.split_once(['/', '\\']).is_some_and(|(prefix, _)| {
+                    prefix.eq_ignore_ascii_case("http") || prefix.eq_ignore_ascii_case("https")
+                }) =>
+            {
                 url::Url::parse(&format!("https://{value}"))
             }
             result => result,
@@ -212,6 +216,10 @@ mod tests {
     fn website_addresses_are_normalized_on_create_and_rename() {
         for (website, expected) in [
             ("zara.com", Some("https://zara.com/")),
+            (
+                "http.example.com/login",
+                Some("https://http.example.com/login"),
+            ),
             (
                 " zara.com/login?next=%2Faccount ",
                 Some("https://zara.com/login?next=%2Faccount"),
@@ -340,6 +348,11 @@ mod tests {
         assert_eq!(workspace.credentials[0].title, "Example");
         assert_eq!(std::fs::read(&storage.path).unwrap(), original);
         for website in [
+            "http//example.com",
+            "https//example.com",
+            "HTTP//example.com",
+            "https/example.com",
+            r"HTTPS\example.com",
             "not a website",
             "https://",
             "javascript:alert(1)",
