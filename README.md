@@ -43,7 +43,7 @@ Latch opens one command window. Create or unlock a vault, then type to filter cr
 
 - Press Up/Down to navigate and Enter to copy the selected credential's password or run a selected command.
 - Open Actions with Ctrl+K, or Cmd+K on macOS, to view details, edit, or copy other fields.
-- Use Ctrl+N to add a credential, Ctrl+E to edit, Ctrl+L to lock, and Ctrl+, to open settings. Use Cmd for these shortcuts on macOS.
+- Use Ctrl+N to add a credential, Ctrl+Shift+E to edit, Ctrl+L to lock, and Ctrl+, to open settings. Use Cmd for these shortcuts on macOS.
 - Save a new or edited credential with the Save credential button or Ctrl+S, or Cmd+S on macOS. Enter saves while a text field is focused.
 - Press Escape to go back and Tab/Shift+Tab to move between controls.
 - Ctrl+Space shows or hides Latch on all platforms when global shortcut registration succeeds.

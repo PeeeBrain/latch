@@ -964,7 +964,7 @@ impl Latch {
                 cx,
                 |this, window, cx| this.edit(window, cx),
             )
-            .children(kbd(p, "secondary-e")),
+            .children(kbd(p, "secondary-shift-e")),
         );
         let error = p.color(Color::Error);
         let selected = p.color(Color::Selected);
@@ -1228,7 +1228,7 @@ impl Latch {
                         None,
                         false,
                         cx,
-                        |this, _, cx| this.apply_appearance(cx),
+                        |this, window, cx| this.apply_appearance(window, cx),
                     )
                     .children(kbd(p, "enter")),
                 );

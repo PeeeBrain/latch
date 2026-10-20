@@ -7,7 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- Edit selected credential is now Ctrl/Cmd+Shift+E, freeing Ctrl/Cmd+E for global shortcuts.
+
 ### Fixed
+- Ctrl+Left/Right (Option on macOS) jump by word in text fields, and add Shift to select. Password fields jump to the ends.
+- The first Down in the actions menu moves to the next action instead of the one already highlighted.
+- Keyboard focus returns to Latch after importing, applying, or leaving an appearance.
 - Keep primary button labels and shortcuts legible across themes, using contrasting text for normal and hover backgrounds when the theme's button text color is too faint.
 - Accept website domains such as `zara.com` when creating or editing credentials, adding HTTPS automatically so an existing website cannot block a title-only edit.
 - Unfinished text composition in a hidden search field no longer silently blocks saving credentials. Unfinished form input now shows a message instead of ignoring Save.
