@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.3] - 2026-10-20
+
 ### Changed
 - Edit selected credential is now Ctrl/Cmd+Shift+E, freeing Ctrl/Cmd+E for global shortcuts.
 
