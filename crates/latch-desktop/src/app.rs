@@ -593,9 +593,28 @@ impl Latch {
                 Ok(Ok(Some(paths))) => paths.into_iter().next(),
                 _ => None,
             };
-            // The native dialog takes the window's focus with it; take it back
-            // so the keyboard keeps working whether or not a file was chosen.
-            let _ = view.update(cx, |this, cx| {
+            let result = match path {
+                Some(path) => Some(cx.background_executor().spawn(async move {
+                    let text = theme::read(&path)?;
+                    // The file's own shape decides the format; the first that
+                    // yields colors wins, otherwise the first parse error is shown.
+                    let mut first_error = None;
+                    for source in [Source::VsCode, Source::Zed] {
+                        match Appearance::parse(&text, source) {
+                            Ok(appearance) if [true, false].into_iter().any(|dark|
+                                appearance.palette(dark).is_ok_and(|(_, count)| count > 0)) => return Ok(Some(appearance)),
+                            Ok(_) => {}
+                            Err(error) => { first_error.get_or_insert(error); }
+                        }
+                    }
+                    first_error.map_or(Ok(None), Err)
+                }).await),
+                None => None,
+            };
+            view.update(cx, |this, cx| {
+                if this.epoch.load(Ordering::SeqCst) != epoch || this.page != page { return; }
+                // The native dialog takes the window's focus with it; take it
+                // back once the page settles so the keyboard keeps working.
                 let window = this.window;
                 cx.defer(move |cx| {
                     let _ = cx.update_window(window, |_, window, cx| {
@@ -603,33 +622,15 @@ impl Latch {
                         window.focus(&focus, cx);
                     });
                 });
-            });
-            let Some(path) = path else { return; };
-            let result = cx.background_executor().spawn(async move {
-                let text = theme::read(&path)?;
-                // The file's own shape decides the format; the first that
-                // yields colors wins, otherwise the first parse error is shown.
-                let mut first_error = None;
-                for source in [Source::VsCode, Source::Zed] {
-                    match Appearance::parse(&text, source) {
-                        Ok(appearance) if [true, false].into_iter().any(|dark|
-                            appearance.palette(dark).is_ok_and(|(_, count)| count > 0)) => return Ok(Some(appearance)),
-                        Ok(_) => {}
-                        Err(error) => { first_error.get_or_insert(error); }
-                    }
-                }
-                first_error.map_or(Ok(None), Err)
-            }).await;
-            view.update(cx, |this, cx| {
-                if this.epoch.load(Ordering::SeqCst) != epoch || this.page != page { return; }
                 match result {
-                    Ok(Some(appearance)) => {
+                    None => {}
+                    Some(Ok(Some(appearance))) => {
                         this.preview = Some(appearance);
                         this.page = Page::Preview;
                         this.notice = "Previewing. Press Enter to apply or Esc to cancel.".into();
                     }
-                    Ok(None) => this.notice = "No colors Latch can use. Choose a T3 Code, VS Code or Zed theme file, or a settings.json with color overrides.".into(),
-                    Err(error) => this.notice = error,
+                    Some(Ok(None)) => this.notice = "No colors Latch can use. Choose a T3 Code, VS Code or Zed theme file, or a settings.json with color overrides.".into(),
+                    Some(Err(error)) => this.notice = error,
                 }
                 cx.notify();
             }).ok();
