@@ -164,7 +164,13 @@ impl Latch {
                 row.bg(selected_bg).text_color(selected_text)
             })
             .hover(move |style| if selected { style } else { style.bg(hover) })
-            .active(move |style| style.bg(selected_bg).text_color(selected_text))
+            .active(move |style| {
+                if selected {
+                    style.opacity(0.85)
+                } else {
+                    style.bg(selected_bg).text_color(selected_text)
+                }
+            })
             .focus(move |style| style.bg(selected_bg).text_color(selected_text))
             .on_action(cx.listener({
                 let on_click = on_click.clone();
