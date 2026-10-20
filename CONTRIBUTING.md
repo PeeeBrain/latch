@@ -33,7 +33,7 @@ Agents must follow the [no-local-build policy](AGENTS.md). Builds and package ch
 
 ## CI and release policy
 
-- CI checks Windows x64, macOS ARM64/x64, and Linux x64 for changes to the crates, workspace, workflows, and release scripts. Documentation-only changes skip these jobs. If CI becomes required in branch protection, replace path filters with change detection so skipped workflows cannot leave checks pending.
+- CI checks Windows x64, macOS ARM64, and Linux x64 for changes to the crates, workspace, workflows, and release scripts. Documentation-only changes skip these jobs. If CI becomes required in branch protection, replace path filters with change detection so skipped workflows cannot leave checks pending.
 - A newer commit to a pull request cancels the older CI and dependency review runs for that pull request.
 - Dependency review runs on every pull request and fails when a change introduces a known vulnerable dependency, except for documented existing advisories without a compatible fix.
 - The Rust dependency audit runs when Cargo manifests or the lockfile change, every Monday at 03:17 UTC, and on manual dispatch.

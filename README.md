@@ -2,7 +2,7 @@
 
 A local password manager with a compact, keyboard-first GPUI interface for Windows, macOS, and Linux.
 
-The native Rust rewrite replaces the previous Tauri app. See [downloads and upgrades](#downloads-and-upgrades) for installation and migration, and the [implementation plan](docs/plans/gpui-rebuild.md) for platform acceptance work.
+The native Rust rewrite replaces the previous Tauri app. See [downloads and upgrades](#downloads-and-upgrades) for installation and migration.
 
 ## Run in development
 

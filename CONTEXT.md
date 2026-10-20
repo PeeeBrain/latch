@@ -17,7 +17,7 @@ A single stored login: id, title, username, password, url, and icon_url.
 _Avoid_: entry, record, item
 
 **AuthMethod**:
-How a Vault was provisioned and must be accessed: **Password** (master password + PBKDF2), **OAuth** (Google sign-in + Argon2id), or **Biometric** (OS keychain).
+How a Vault was provisioned and must be accessed: **Password** (master password + PBKDF2) or **Biometric** (device key in the OS keychain).
 _Avoid_: KDF, auth type, login method
 
 **Provision**:
@@ -49,11 +49,12 @@ Copies a password to the system clipboard and clears it after 30 seconds.
 _Avoid_: clipboard timeout, clipboard watcher
 
 **Command Palette**:
-The single-window Raycast-style interface. Presents a search bar, results list, and mode-specific panels.
+The single-window Raycast-style interface. Presents a search bar, results list, and page-specific panels.
 _Avoid_: main window, UI, frontend
 
-**Mode**:
-A discrete UI state within the Command Palette. Modes include: search, actions, add-credential, edit-credential, delete-confirm, settings, password-generator, vault-health, health-weak, health-reused, health-breached, auth-selector, oauth-setup, oauth-login, biometric-setup, biometric-login, migrate.
+**Page**:
+A discrete screen within the Command Palette (`Page` enum in `latch-desktop/src/app.rs`): Setup, Locked, Browse, Details, Edit, Delete, Settings, Rotate, Health, Actions, Appearance, Preview, Providers, Provider, DeleteProvider, Generator, Discard.
+_Avoid_: mode, view, screen
 
 ## Relationships
 
@@ -64,7 +65,7 @@ A discrete UI state within the Command Palette. Modes include: search, actions, 
 - Failed **Access** attempts trigger a **Lockout**.
 - **VaultHealth** audits all **Credentials** in the **Workspace**.
 - **ClipboardGuard** protects a single **Credential** password after copying.
-- The **Command Palette** navigates between **Modes** to expose different operations.
+- The **Command Palette** navigates between **Pages** to expose different operations.
 
 ## Example dialogue
 
@@ -81,4 +82,4 @@ A discrete UI state within the Command Palette. Modes include: search, actions, 
 
 - "vault" was used to mean both the encrypted file on disk and the in-memory decrypted state — resolved: **Vault** (disk) and **Workspace** (memory) are distinct concepts.
 - "entry" was the code term for a stored credential — resolved: renamed to **Credential**.
-- KDF strings ("password-pbkdf2", "oauth-argon2id") were used as auth method identifiers — resolved: **AuthMethod** is a domain enum; KDF is an implementation detail (see ADR-0002).
+- KDF strings such as "password-pbkdf2" were used as auth method identifiers — resolved: **AuthMethod** is a domain enum; KDF is an implementation detail (see ADR-0002).
