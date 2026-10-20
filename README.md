@@ -39,11 +39,12 @@ These launch commands are for developers to run. Agents must follow the [no-loca
 
 ## How the app works
 
-Latch opens one command window. Create or unlock a vault, then type to filter credentials and commands. Search, credential editing, password generation, health checks, and settings all stay inside this window. The footer names the current Enter action; the Actions panel provides commands for the selected credential.
+Latch opens one command window. Create or unlock a vault, then type to filter credentials and commands. Search, credential editing, password generation, health checks, and settings all stay inside this window. The footer shows the primary action and its shortcut; the Actions panel provides commands for the selected credential.
 
 - Press Up/Down to navigate and Enter to copy the selected credential's password or run a selected command.
 - Open Actions with Ctrl+K, or Cmd+K on macOS, to view details, edit, or copy other fields.
 - Use Ctrl+N to add a credential, Ctrl+E to edit, Ctrl+L to lock, and Ctrl+, to open settings. Use Cmd for these shortcuts on macOS.
+- Save a new or edited credential with the Save credential button or Ctrl+S, or Cmd+S on macOS. Enter saves while a text field is focused.
 - Press Escape to go back and Tab/Shift+Tab to move between controls.
 - Ctrl+Space shows or hides Latch on all platforms when global shortcut registration succeeds.
 

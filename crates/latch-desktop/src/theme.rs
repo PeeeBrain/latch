@@ -98,10 +98,49 @@ pub struct Palette {
     pub dark: bool,
 }
 impl Global for Palette {}
+// Button labels and shortcut captions use normal-sized text.
+const MIN_TEXT_CONTRAST: f32 = 4.5;
+
 impl Palette {
-    pub fn low_contrast(&self) -> bool {
+    /// Foreground for a primary button's normal or hover background.
+    pub fn button_text(&self, background: Color, surface: Color) -> Hsla {
+        for role in [Color::ButtonText, Color::Text, Color::Background] {
+            let text = self.color(role);
+            if self.contrast(text, background, surface) >= MIN_TEXT_CONTRAST {
+                return text;
+            }
+        }
+        let dark = rgb(0x000000).into();
+        let light = rgb(0xffffff).into();
+        if self.contrast(dark, background, surface) >= self.contrast(light, background, surface) {
+            dark
+        } else {
+            light
+        }
+    }
+
+    fn contrast(&self, text: Hsla, background: Color, surface: Color) -> f32 {
         use gpui_kit::Rgba;
         let base = Rgba::from(self.color(Color::Background));
+        let surface = base.blend(self.color(surface).into());
+        let background = surface.blend(self.color(background).into());
+        let text = background.blend(text.into());
+        let luminance = |color: Rgba| {
+            let linear = |channel: f32| {
+                if channel <= 0.04045 {
+                    channel / 12.92
+                } else {
+                    ((channel + 0.055) / 1.055).powf(2.4)
+                }
+            };
+            linear(color.r) * 0.2126 + linear(color.g) * 0.7152 + linear(color.b) * 0.0722
+        };
+        let a = luminance(text);
+        let b = luminance(background);
+        (a.max(b) + 0.05) / (a.min(b) + 0.05)
+    }
+
+    pub fn low_contrast(&self) -> bool {
         [
             (Color::Text, Color::Background),
             (Color::InputText, Color::Input),
@@ -110,21 +149,7 @@ impl Palette {
         ]
         .into_iter()
         .any(|(text, background)| {
-            let background = base.blend(self.color(background).into());
-            let text = background.blend(self.color(text).into());
-            let luminance = |color: Rgba| {
-                let linear = |channel: f32| {
-                    if channel <= 0.04045 {
-                        channel / 12.92
-                    } else {
-                        ((channel + 0.055) / 1.055).powf(2.4)
-                    }
-                };
-                linear(color.r) * 0.2126 + linear(color.g) * 0.7152 + linear(color.b) * 0.0722
-            };
-            let a = luminance(text);
-            let b = luminance(background);
-            (a.max(b) + 0.05) / (a.min(b) + 0.05) < 4.5
+            self.contrast(self.color(text), background, Color::Background) < MIN_TEXT_CONTRAST
         })
     }
     pub fn fallback(dark: bool) -> Self {
@@ -719,6 +744,71 @@ pub fn atomic_write(path: &Path, bytes: &[u8]) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn primary_button_text_follows_readable_theme_colors() {
+        for (canvas, text, background, hover, foreground, normal_text, hover_text) in [
+            (
+                "#121212", "#ffffff", "#d97757", "#171717", "#ffffff", "#121212", "#ffffff",
+            ),
+            (
+                "#fafafa", "#171717", "#d97757", "#eeeeee", "#ffffff", "#171717", "#171717",
+            ),
+            (
+                "#121212", "#ffffff", "#102030", "#203040", "#aaddff", "#aaddff", "#aaddff",
+            ),
+            (
+                "#121212",
+                "#ffffff",
+                "#ffffff80",
+                "#00000080",
+                "#ffffff",
+                "#121212",
+                "#ffffff",
+            ),
+            (
+                "#808080", "#777777", "#777777", "#aaaaaa", "#777777", "#000000", "#000000",
+            ),
+        ] {
+            let settings = serde_json::json!({"workbench.colorCustomizations": {
+                "editor.background": canvas,
+                "foreground": text,
+                "button.background": background,
+                "button.hoverBackground": hover,
+                "button.foreground": foreground,
+            }});
+            let appearance = Appearance::parse(&settings.to_string(), Source::VsCode).unwrap();
+            for dark in [false, true] {
+                let (palette, _) = appearance.palette(dark).unwrap();
+                assert_eq!(
+                    palette.button_text(Color::Button, Color::Background),
+                    parse_color(normal_text).unwrap()
+                );
+                assert_eq!(
+                    palette.button_text(Color::ButtonHover, Color::Background),
+                    parse_color(hover_text).unwrap()
+                );
+            }
+        }
+        let appearance = Appearance::parse(
+            r##"{"workbench.colorCustomizations": {
+            "editor.background": "#121212", "foreground": "#ffffff",
+            "statusBar.background": "#fafafa", "button.background": "#ffffff00",
+            "button.foreground": "#ffffff"
+        }}"##,
+            Source::VsCode,
+        )
+        .unwrap();
+        let (palette, _) = appearance.palette(true).unwrap();
+        assert_eq!(
+            palette.button_text(Color::Button, Color::Background),
+            parse_color("#ffffff").unwrap()
+        );
+        assert_eq!(
+            palette.button_text(Color::Button, Color::Footer),
+            parse_color("#121212").unwrap()
+        );
+    }
+
     #[test]
     fn editor_settings_select_sanitize_validate_and_roundtrip() {
         let vs = r##"{ // user's full settings

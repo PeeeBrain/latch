@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- Keep primary button labels and shortcuts legible across themes, using contrasting text for normal and hover backgrounds when the theme's button text color is too faint.
+- Accept website domains such as `zara.com` when creating or editing credentials, adding HTTPS automatically so an existing website cannot block a title-only edit.
+- Unfinished text composition in a hidden search field no longer silently blocks saving credentials. Unfinished form input now shows a message instead of ignoring Save.
+- Give new and existing credentials a persistent Save credential button and Ctrl/Cmd+S shortcut, including when Alias or Generate has keyboard focus.
+- Show credential save errors in full inside the form so they can be corrected without discarding changes.
+
 ## [0.3.2] - 2026-10-20
 
 ### Changed

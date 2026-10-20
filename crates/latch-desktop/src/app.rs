@@ -27,6 +27,7 @@ gpui_kit::actions!(
         Quit,
         Back,
         Submit,
+        SaveCredential,
         Next,
         Previous,
         Add,
@@ -1098,11 +1099,20 @@ impl Latch {
         }
     }
     fn submit(&mut self, _: &Submit, window: &mut Window, cx: &mut Context<Self>) {
-        if self.busy
-            || self.query.read(cx).composing()
-            || self.action_query.read(cx).composing()
-            || self.fields.iter().any(|field| field.read(cx).composing())
-        {
+        if self.busy {
+            return;
+        }
+        let composing = match self.page {
+            Page::Browse => self.query.read(cx).composing(),
+            Page::Actions => self.action_query.read(cx).composing(),
+            Page::Setup | Page::Locked | Page::Rotate | Page::Edit | Page::Provider => {
+                self.fields.iter().any(|field| field.read(cx).composing())
+            }
+            _ => false,
+        };
+        if composing {
+            self.notice = "Finish entering text, then try again.".into();
+            cx.notify();
             return;
         }
         match self.page {
@@ -1613,11 +1623,17 @@ impl Latch {
     ) -> gpui_kit::base::Button {
         let palette = cx.global::<Palette>().clone();
         let label = label.into();
+        // Save is the Edit page's primary button and sits on the footer.
+        let surface = if self.page == Page::Edit {
+            Color::Footer
+        } else {
+            Color::Background
+        };
         let (background, hover, text, border) = match kind {
             ButtonKind::Primary => (
                 palette.color(Color::Button),
                 palette.color(Color::ButtonHover),
-                palette.color(Color::ButtonText),
+                palette.button_text(Color::Button, surface),
                 gpui_kit::transparent_black(),
             ),
             ButtonKind::Secondary => (
@@ -1638,6 +1654,11 @@ impl Latch {
                 palette.color(Color::Error),
                 palette.color(Color::Error).opacity(0.3),
             ),
+        };
+        let hover_text = if kind == ButtonKind::Primary {
+            palette.button_text(Color::ButtonHover, surface)
+        } else {
+            text
         };
         let focus = palette.color(Color::Focus);
         let action = std::rc::Rc::new(action);
@@ -1661,7 +1682,7 @@ impl Latch {
             .line_height(px(18.))
             .font_weight(FontWeight::MEDIUM)
             .cursor_pointer()
-            .hover(move |style| style.bg(hover))
+            .hover(move |style| style.bg(hover).text_color(hover_text))
             .active(move |style| style.opacity(0.85))
             .styles(|s| s.disabled(|style| style.opacity(0.45)))
             .focus(move |style| style.border_color(focus))
@@ -1680,6 +1701,8 @@ pub fn init(cx: &mut App) {
         KeyBinding::new("ctrl-alt-r", ResetAppearance, Some("Latch")),
         KeyBinding::new("cmd-alt-r", ResetAppearance, Some("Latch")),
         KeyBinding::new("enter", Submit, Some("Latch")),
+        KeyBinding::new("ctrl-s", SaveCredential, Some("Latch")),
+        KeyBinding::new("cmd-s", SaveCredential, Some("Latch")),
         KeyBinding::new("down", Next, Some("Latch")),
         KeyBinding::new("up", Previous, Some("Latch")),
         KeyBinding::new("tab", Tab, Some("Latch")),
@@ -2008,6 +2031,231 @@ mod tests {
                 "{:?}",
                 view.read(cx).page
             );
+        });
+    }
+
+    #[gpui_kit::test]
+    fn credential_forms_save_through_keyboard_and_pointer(cx: &mut TestAppContext) {
+        use gpui_kit::{AppContext as _, test::TestWindowExt as _};
+        let directory = tempfile::tempdir().unwrap();
+        cx.update(|cx| {
+            gpui_kit::init(cx);
+            crate::input::init(cx);
+            super::init(cx);
+        });
+        let mut view = None;
+        let (_, cx) = cx.add_window_view(|window, cx| {
+            let latch = cx.new(|cx| {
+                Latch::new(
+                    VaultStorage {
+                        path: directory.path().join("vault.enc"),
+                    },
+                    window,
+                    cx,
+                )
+            });
+            view = Some(latch.clone());
+            gpui_kit::base::Root::new(latch, window, cx)
+        });
+        let view = view.unwrap();
+        cx.simulate_resize(gpui_kit::size(gpui_kit::px(720.), gpui_kit::px(480.)));
+        cx.update(|window, cx| window.draw(cx).clear(cx));
+        cx.simulate_input("a long test master password");
+        cx.simulate_keystrokes("tab");
+        cx.simulate_input("a long test master password");
+        cx.simulate_keystrokes("enter");
+        cx.run_until_parked();
+        cx.update(|window, cx| {
+            assert_eq!(view.read(cx).page, Page::Browse, "{}", view.read(cx).notice);
+            window.draw(cx).clear(cx);
+        });
+        let methods = ["enter", "ctrl-s", "cmd-s", "click", "button"];
+        let compose = |input: gpui_kit::Entity<super::TextInput>,
+                       text: &str,
+                       cx: &mut gpui_kit::VisualTestContext| {
+            cx.update(|window, cx| {
+                input.update(cx, |input, cx| {
+                    let range = 0..input.value().encode_utf16().count();
+                    gpui_kit::EntityInputHandler::replace_and_mark_text_in_range(
+                        input,
+                        Some(range),
+                        text,
+                        None,
+                        window,
+                        cx,
+                    );
+                });
+            });
+            cx.run_until_parked();
+        };
+        let save = |method, cx: &mut gpui_kit::VisualTestContext| {
+            match method {
+                "click" => cx.update(|window, cx| window.click("save-credential", cx)),
+                "button" => {
+                    // From Password, tab past Generate, Website, and Authenticator.
+                    cx.simulate_keystrokes("tab tab tab tab");
+                    cx.update(|window, cx| window.press("enter", cx));
+                }
+                "enter" => cx.simulate_keystrokes("enter"),
+                shortcut => {
+                    // Generate owns Enter, but must leave the save shortcut available.
+                    cx.simulate_keystrokes("tab");
+                    cx.simulate_keystrokes(shortcut);
+                }
+            }
+            cx.run_until_parked();
+        };
+        for (index, method) in methods.iter().enumerate() {
+            if matches!(*method, "enter" | "click") {
+                if *method == "click" {
+                    cx.simulate_keystrokes("ctrl-k");
+                }
+                let filter = cx.update(|_, cx| {
+                    let this = view.read(cx);
+                    if *method == "click" {
+                        this.action_query.clone()
+                    } else {
+                        this.query.clone()
+                    }
+                });
+                compose(filter, "e", cx);
+            }
+            cx.simulate_keystrokes("ctrl-n");
+            cx.update(|window, cx| window.draw(cx).clear(cx));
+            cx.simulate_input(&format!("Example {method}"));
+            cx.simulate_keystrokes("tab");
+            cx.simulate_input("person@example.com");
+            // Alias is a keyboard stop before Password.
+            cx.simulate_keystrokes("tab tab");
+            cx.simulate_input("first credential secret");
+            cx.simulate_keystrokes("tab tab");
+            // Reserved domain keeps UI tests independent of favicon network requests.
+            cx.simulate_input("zara.invalid");
+            cx.simulate_keystrokes("shift-tab shift-tab");
+            save(*method, cx);
+            cx.update(|window, cx| {
+                assert_eq!(
+                    view.read(cx).page,
+                    Page::Browse,
+                    "{method}: {}",
+                    view.read(cx).notice
+                );
+                assert_eq!(view.read(cx).previews.len(), index + 1);
+                window.draw(cx).clear(cx);
+            });
+            // Select the credential just created, using the real search field.
+            cx.simulate_keystrokes("ctrl-a");
+            cx.simulate_input(&format!("Example {method}"));
+            cx.run_until_parked();
+            if matches!(*method, "enter" | "click") {
+                if *method == "click" {
+                    cx.simulate_keystrokes("ctrl-k");
+                }
+                let filter = cx.update(|_, cx| {
+                    let this = view.read(cx);
+                    if *method == "click" {
+                        this.action_query.clone()
+                    } else {
+                        this.query.clone()
+                    }
+                });
+                compose(filter, &format!("Example {method}"), cx);
+                cx.simulate_keystrokes("ctrl-e");
+                cx.update(|window, cx| window.draw(cx).clear(cx));
+            } else {
+                cx.simulate_keystrokes("ctrl-k");
+                cx.simulate_input("View selected credential");
+                cx.simulate_keystrokes("enter");
+                cx.run_until_parked();
+                cx.update(|window, cx| {
+                    assert_eq!(view.read(cx).page, Page::Details);
+                    window.click("detail-edit", cx);
+                });
+            }
+            cx.simulate_keystrokes("ctrl-a");
+            cx.simulate_input(&format!("Renamed {method}"));
+            cx.simulate_keystrokes("tab tab tab ctrl-a");
+            if index == 0 {
+                cx.simulate_keystrokes("backspace");
+                cx.update(|window, cx| window.click("save-credential", cx));
+                cx.run_until_parked();
+                cx.update(|window, cx| {
+                    let this = view.read(cx);
+                    assert_eq!(this.page, Page::Edit);
+                    assert!(this.notice.contains("Password is required"));
+                    assert_eq!(this.fields[0].read(cx).value(), "Renamed enter");
+                    assert_eq!(this.fields[1].read(cx).value(), "person@example.com");
+                    window.draw(cx).clear(cx);
+                });
+                // Return from Save to Password to correct the rejected draft.
+                cx.simulate_keystrokes("shift-tab shift-tab shift-tab shift-tab");
+            }
+            cx.simulate_input("updated credential secret");
+            if *method == "button" {
+                let password = cx.update(|_, cx| view.read(cx).fields[2].clone());
+                compose(password.clone(), "updated credential secret", cx);
+                cx.simulate_keystrokes("enter");
+                cx.update(|window, cx| {
+                    assert_eq!(view.read(cx).page, Page::Edit);
+                    assert_eq!(
+                        view.read(cx).notice,
+                        "Finish entering text, then try again."
+                    );
+                    password.update(cx, |password, cx| {
+                        gpui_kit::EntityInputHandler::unmark_text(password, window, cx);
+                    });
+                });
+            }
+            if *method == "enter" {
+                cx.simulate_keystrokes("shift-tab shift-tab shift-tab");
+            }
+            save(*method, cx);
+            cx.update(|window, cx| {
+                assert_eq!(
+                    view.read(cx).page,
+                    Page::Browse,
+                    "{method}: {}",
+                    view.read(cx).notice
+                );
+                window.draw(cx).clear(cx);
+            });
+            cx.simulate_keystrokes("ctrl-a backspace");
+            cx.run_until_parked();
+            cx.update(|window, cx| {
+                assert_eq!(view.read(cx).previews.len(), index + 1);
+                window.draw(cx).clear(cx);
+            });
+        }
+        cx.simulate_keystrokes("ctrl-l");
+        cx.run_until_parked();
+        cx.update(|window, cx| window.draw(cx).clear(cx));
+        cx.simulate_input("a long test master password");
+        cx.simulate_keystrokes("enter");
+        cx.run_until_parked();
+        cx.update(|window, cx| {
+            let this = view.read(cx);
+            assert_eq!(this.page, Page::Browse, "{}", this.notice);
+            this.vault
+                .lock()
+                .unwrap()
+                .with_vault(|_, workspace| {
+                    assert_eq!(workspace.credentials.len(), methods.len());
+                    for method in methods {
+                        let credential = workspace
+                            .credentials
+                            .iter()
+                            .find(|credential| credential.title == format!("Renamed {method}"))
+                            .expect(
+                                "edited credential must survive locking and accessing the Vault",
+                            );
+                        assert_eq!(credential.username, "person@example.com");
+                        assert_eq!(credential.password, "updated credential secret");
+                        assert_eq!(credential.url.as_deref(), Some("https://zara.invalid/"));
+                    }
+                    Ok(())
+                })
+                .unwrap();
+            window.draw(cx).clear(cx);
         });
     }
 

@@ -97,12 +97,22 @@ fn validate(entry: &mut Entry) -> Result<(), String> {
     if let Some(value) = entry
         .url
         .as_deref()
-        .filter(|value| !value.trim().is_empty())
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
     {
-        let parsed = url::Url::parse(value).map_err(|_| "Invalid URL")?;
-        if !matches!(parsed.scheme(), "http" | "https") || parsed.host_str().is_none() {
-            return Err("URL must use HTTP or HTTPS".into());
+        let parsed = match url::Url::parse(value) {
+            Err(url::ParseError::RelativeUrlWithoutBase) => {
+                url::Url::parse(&format!("https://{value}"))
+            }
+            result => result,
         }
+        .map_err(|_| "Enter a website such as example.com or https://example.com.")?;
+        if !matches!(parsed.scheme(), "http" | "https") || parsed.host_str().is_none() {
+            return Err("Website must use HTTP or HTTPS.".into());
+        }
+        entry.url = Some(parsed.into());
+    } else {
+        entry.url = None;
     }
     if let Some(secret) = entry
         .totp_secret
@@ -199,6 +209,58 @@ mod tests {
     }
 
     #[test]
+    fn website_addresses_are_normalized_on_create_and_rename() {
+        for (website, expected) in [
+            ("zara.com", Some("https://zara.com/")),
+            (
+                " zara.com/login?next=%2Faccount ",
+                Some("https://zara.com/login?next=%2Faccount"),
+            ),
+            (
+                "https://example.com/login",
+                Some("https://example.com/login"),
+            ),
+            (
+                "http://localhost:8080/login",
+                Some("http://localhost:8080/login"),
+            ),
+            ("", None),
+            ("   ", None),
+        ] {
+            for editing in [true, false] {
+                let (storage, _directory) = test_storage();
+                let mut workspace = unlocked_workspace();
+                // Older vaults can contain a website without a scheme.
+                workspace.credentials[0].url = Some(website.into());
+                persist(&workspace, &storage).unwrap();
+                let mut credential = workspace.credentials[0].clone();
+                credential.title = "Zara1".into();
+                if editing {
+                    update(&mut workspace, &storage, credential).unwrap();
+                } else {
+                    credential.id = "new-credential".into();
+                    add(&mut workspace, &storage, credential).unwrap();
+                }
+                workspace.lock();
+                super::super::access::access(&storage, &mut workspace, &[7; 32]).unwrap();
+                let saved = workspace
+                    .credentials
+                    .iter()
+                    .find(|credential| credential.title == "Zara1")
+                    .unwrap();
+                assert_eq!(
+                    saved.url.as_deref(),
+                    expected,
+                    "{website:?}, editing={editing}"
+                );
+                assert_eq!(saved.username, "user");
+                assert_eq!(saved.password, "secret");
+                assert_eq!(workspace.credentials.len(), if editing { 1 } else { 2 });
+            }
+        }
+    }
+
+    #[test]
     fn update_preserves_a_stored_totp_secret_when_the_replacement_omits_it() {
         let (storage, _dir) = test_storage();
         let mut workspace = unlocked_workspace();
@@ -277,6 +339,28 @@ mod tests {
         assert!(update(&mut workspace, &storage, invalid).is_err());
         assert_eq!(workspace.credentials[0].title, "Example");
         assert_eq!(std::fs::read(&storage.path).unwrap(), original);
+        for website in [
+            "not a website",
+            "https://",
+            "javascript:alert(1)",
+            "data:text/plain,password",
+            "mailto:person@example.com",
+            "file:///tmp/credential",
+            "ftp://example.com",
+        ] {
+            let mut invalid = replacement(None);
+            invalid.url = Some(website.into());
+            assert!(
+                update(&mut workspace, &storage, invalid.clone()).is_err(),
+                "{website}"
+            );
+            invalid.id = "new-credential".into();
+            assert!(add(&mut workspace, &storage, invalid).is_err(), "{website}");
+            assert_eq!(workspace.credentials.len(), 1);
+            assert_eq!(workspace.credentials[0].title, "Example");
+            assert_eq!(workspace.credentials[0].url, None);
+            assert_eq!(std::fs::read(&storage.path).unwrap(), original);
+        }
         let inaccessible = VaultStorage {
             path: directory.path().to_path_buf(),
         };

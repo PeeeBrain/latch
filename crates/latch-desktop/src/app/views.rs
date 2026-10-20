@@ -24,7 +24,6 @@ fn kbd(p: &Palette, keys: &str) -> Option<gpui_kit::Div> {
             .rounded(px(4.))
             .bg(ui::wash(p, 0.07))
             .text_size(px(11.))
-            .text_color(p.color(Color::Muted))
             .child(label),
     )
 }
@@ -434,7 +433,9 @@ impl Latch {
                 .fields
                 .iter()
                 .any(|field| field.read(cx).focus_handle(cx).is_focused(window));
-        let primary = self.primary_label(cx).filter(|_| !on_row);
+        let primary = self
+            .primary_label(cx)
+            .filter(|_| !on_row || self.page == Page::Edit);
         if primary.is_none() && !auth {
             right = right.child(
                 div()
@@ -451,14 +452,32 @@ impl Latch {
             );
         }
         if let Some(label) = primary {
-            right = right.child(
-                link("primary")
-                    .text_color(p.color(Color::Text))
-                    .font_weight(FontWeight::MEDIUM)
-                    .on_click(cx.listener(|this, _, window, cx| this.submit(&Submit, window, cx)))
-                    .child(label)
-                    .children(kbd(p, "enter")),
-            );
+            right = if self.page == Page::Edit {
+                right.child(
+                    self.button(
+                        "save-credential",
+                        None,
+                        label,
+                        ButtonKind::Primary,
+                        |this, window, cx| this.submit(&Submit, window, cx),
+                        cx,
+                    )
+                    .children(
+                        kbd(p, "secondary-s").map(|hint| hint.bg(gpui_kit::transparent_black())),
+                    ),
+                )
+            } else {
+                right.child(
+                    link("primary")
+                        .text_color(p.color(Color::Text))
+                        .font_weight(FontWeight::MEDIUM)
+                        .on_click(
+                            cx.listener(|this, _, window, cx| this.submit(&Submit, window, cx)),
+                        )
+                        .child(label)
+                        .children(kbd(p, "enter")),
+                )
+            };
         }
         if !auth && self.page != Page::Actions {
             right = right
@@ -746,9 +765,17 @@ impl Latch {
         form = form.child(
             div().pl(px(8. + 104. + 12.)).pt(px(2.)).child(muted(
                 p,
-                "Website and authenticator are optional. The authenticator accepts a secret or an otpauth:// URI.",
+                "Website and authenticator are optional. Websites default to HTTPS. The authenticator accepts a secret or an otpauth:// URI.",
             )),
         );
+        if !self.notice.is_empty() {
+            form = form.child(
+                div()
+                    .pl(px(8. + 104. + 12.))
+                    .pr(px(8.))
+                    .child(muted(p, self.notice.clone()).text_color(p.color(Color::Warning))),
+            );
+        }
         body = body.child(form);
         body
     }
@@ -1947,6 +1974,13 @@ impl Render for Latch {
                 cx.quit();
             }))
             .on_action(cx.listener(Self::back))
+            .on_action(cx.listener(|this, _: &SaveCredential, window, cx| {
+                if this.page == Page::Edit {
+                    this.submit(&Submit, window, cx);
+                } else {
+                    cx.propagate();
+                }
+            }))
             .on_action(cx.listener(|this, _: &ResetAppearance, _, cx| this.reset_appearance(cx)))
             .on_action(cx.listener(|this, action: &Submit, window, cx| {
                 if this.focus.is_focused(window)
