@@ -30,11 +30,13 @@ fn kbd(p: &Palette, keys: &str) -> Option<gpui_kit::Div> {
 }
 
 /// Stable tint for a credential's initial tile, derived from its title.
-fn title_tint(title: &str) -> Hsla {
+/// Darker on light backgrounds so the initial stays legible.
+fn title_tint(p: &Palette, title: &str) -> Hsla {
     let hash = title.bytes().fold(7u32, |hash, byte| {
         hash.wrapping_mul(31).wrapping_add(byte as u32)
     });
-    hsla((hash % 360) as f32 / 360., 0.55, 0.62, 1.)
+    let lightness = if p.dark { 0.62 } else { 0.42 };
+    hsla((hash % 360) as f32 / 360., 0.55, lightness, 1.)
 }
 
 fn initial(title: &str) -> String {
@@ -59,7 +61,7 @@ impl Latch {
             .and_then(Option::as_ref);
         let tile = match image {
             Some(image) => ui::tile(p, img(image.clone()).size(px(size - 8.)), None),
-            None => ui::tile(p, initial(title), Some(title_tint(title))),
+            None => ui::tile(p, initial(title), Some(title_tint(p, title))),
         };
         tile.size(px(size))
             .rounded(px(size / 4.))
@@ -162,6 +164,13 @@ impl Latch {
                 row.bg(selected_bg).text_color(selected_text)
             })
             .hover(move |style| if selected { style } else { style.bg(hover) })
+            .active(move |style| {
+                if selected {
+                    style.opacity(0.85)
+                } else {
+                    style.bg(selected_bg).text_color(selected_text)
+                }
+            })
             .focus(move |style| style.bg(selected_bg).text_color(selected_text))
             .on_action(cx.listener({
                 let on_click = on_click.clone();
@@ -257,6 +266,7 @@ impl Latch {
 
     fn back_button(&self, p: &Palette, cx: &mut Context<Self>) -> gpui_kit::base::Button {
         let hover = ui::wash(p, 0.1);
+        let pressed = ui::wash(p, 0.16);
         let focus = p.color(Color::Focus);
         // Escape is the keyboard path back, so arrows start on the content.
         gpui_kit::base::Button::new("back")
@@ -273,6 +283,7 @@ impl Latch {
             .text_color(p.color(Color::Muted))
             .cursor_pointer()
             .hover(move |style| style.bg(hover))
+            .active(move |style| style.bg(pressed))
             .focus(move |style| style.border_color(focus))
             .on_click(cx.listener(|this, _, window, cx| this.back(&Back, window, cx)))
             .child(Icon::ChevronLeft)
@@ -397,6 +408,7 @@ impl Latch {
             });
         let link = |id: &'static str| {
             let hover = ui::wash(p, 0.07);
+            let pressed = ui::wash(p, 0.12);
             div()
                 .id(id)
                 .flex()
@@ -408,6 +420,7 @@ impl Latch {
                 .rounded(px(5.))
                 .cursor_pointer()
                 .hover(move |style| style.bg(hover))
+                .active(move |style| style.bg(pressed))
         };
         let mut right = div().flex().flex_shrink_0().items_center().gap(px(4.));
         // A focused row or button owns Enter; only fields leave it to the page.
@@ -1165,7 +1178,7 @@ impl Latch {
                         row.bg(p.color(Color::Selected))
                             .text_color(p.color(Color::SelectedText))
                     })
-                    .child(ui::tile(p, initial(title), Some(title_tint(title))))
+                    .child(ui::tile(p, initial(title), Some(title_tint(p, title))))
                     .child(title)
                     .child(div().text_color(p.color(Color::Muted)).child(subtitle))
             };

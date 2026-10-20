@@ -702,6 +702,7 @@ impl Latch {
             if let Some(field) = self.fields.first() {
                 field.update(cx, |field, cx| field.set_masked(true, cx));
             }
+            cx.notify();
         }
         // ponytail: poll one small managed file each second; use an OS watcher if
         // appearance editing ever needs sub-second updates. Parent replacement is detected.
@@ -739,7 +740,13 @@ impl Latch {
             self.lock(window, cx);
             self.notice = "Locked after 30 minutes of inactivity".into();
         }
-        if self.page == Page::Details {
+        // Only the one-time code counts down; an idle Details page stays still.
+        if self.page == Page::Details
+            && self
+                .detail
+                .as_ref()
+                .is_some_and(|entry| entry.totp_secret.is_some())
+        {
             cx.notify();
         }
     }
