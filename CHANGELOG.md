@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- Update GPUI Kit to 0.7.3 and refresh native dependencies.
+- Update the JWT library used by historical Vault compatibility tests and select its crypto backend explicitly.
+
 ## [0.3.1] - 2026-10-18
 
 ### Changed

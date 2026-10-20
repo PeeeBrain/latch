@@ -64,12 +64,15 @@ pub fn derive_historical_key(user_id: &str) -> Result<[u8; 32], String> {
 }
 
 pub fn decode_id_token(id_token: &str) -> Result<GoogleIdToken, String> {
-    // Validate critical claims for security
-    // Note: Signature validation requires fetching Google's public keys (JWKs)
-    // which should be implemented for production. For now, we validate claims.
+    // Historical compatibility only; the native app never enables this module.
     let client_id = env::var("LATCH_OAUTH_CLIENT_ID").unwrap_or_else(|_| String::new());
 
     let mut validation = Validation::new(Algorithm::RS256);
+    // insecure_decode skips claim validation too, so retain the historical checks.
+    #[expect(
+        deprecated,
+        reason = "Historical Vault tests still need claim validation"
+    )]
     validation.insecure_disable_signature_validation();
     validation.validate_aud = true;
     validation.validate_exp = true;
@@ -82,7 +85,7 @@ pub fn decode_id_token(id_token: &str) -> Result<GoogleIdToken, String> {
 
     let token_data = decode::<GoogleIdToken>(
         id_token,
-        &jsonwebtoken::DecodingKey::from_secret(&[]),
+        &jsonwebtoken::DecodingKey::from_rsa_der(&[]),
         &validation,
     )
     .map_err(|e| format!("Failed to decode token: {}", e))?;

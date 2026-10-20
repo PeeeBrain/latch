@@ -16,7 +16,7 @@ data-encoding = "2.9"
 dirs = "6"
 fuzzy-matcher = "0.3"
 hex = "0.4"
-jsonwebtoken = { version = "9", optional = true }
+jsonwebtoken = { version = "10", optional = true, features = ["aws_lc_rs"] }
 pbkdf2 = "0.12"
 rand = "0.8"
 reqwest = { version = "0.12", features = ["rustls-tls"] }
