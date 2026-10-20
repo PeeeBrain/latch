@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Latch CI timing audit</title>
+<style>
+body{margin:0;background:transparent;color:var(--foreground);font-family:var(--font-sans,system-ui)}h2,h3{font-weight:500}h2{margin:0 0 12px}h3{margin:24px 0 12px}p{margin:10px 0}a{color:var(--foreground);text-underline-offset:3px}.muted{color:var(--muted-foreground)}table{border-collapse:collapse;width:100%;font-variant-numeric:tabular-nums}th,td{text-align:left;padding:10px 8px 10px 0;border-bottom:1px solid var(--border);vertical-align:top}th{font-weight:500}.number{text-align:right;padding-right:0;white-space:nowrap}.allocation{height:32px;display:flex;margin:16px 0 12px;overflow:hidden}.part{min-width:1px}.ci{background:var(--chart-1)}.package{background:var(--chart-2)}.audit{background:var(--chart-3)}.review{background:var(--chart-4)}.legend{display:flex;gap:12px 22px;flex-wrap:wrap}.legend span{display:inline-flex;gap:7px;align-items:center}.swatch{display:inline-block;width:10px;height:10px}.plan{padding-left:22px}.plan li{margin:12px 0}strong{font-weight:500}small{font-size:inherit} @media(max-width:430px){th,td{padding-top:8px;padding-bottom:8px}table{font-size:inherit}.legend{display:grid;gap:8px}.sample{display:none}}
+</style></head><body><main id="latch-ci-audit">
+<h2>Repeated compilation is the largest avoidable expense</h2>
+<p><a href="https://github.com/PeeeBrain/latch/actions/runs/39149362818">Latest code PR</a>: <strong>41.88 runner-minutes</strong> across four workflows; <strong>8m 27s</strong> to finish.</p>
+<div class="allocation" role="img" aria-label="Latest PR execution totals. CI 20.82 runner-minutes, packaging 19.28, security audit 1.67, dependency review 0.12. Packaging accounts for 46 percent.">
+<div class="part ci" style="width:49.7016%"></div><div class="part package" style="width:46.0406%"></div><div class="part audit" style="width:3.9793%"></div><div class="part review" style="width:0.2785%"></div></div>
+<div class="legend"><span><i class="swatch ci" aria-hidden="true"></i>CI · 20.82 min</span><span><i class="swatch package" aria-hidden="true"></i>Packaging · 19.28 min</span><span><i class="swatch audit" aria-hidden="true"></i>Audit · 1.67 min</span><span><i class="swatch review" aria-hidden="true"></i>Review · 0.12 min</span></div>
+<h3>Current Blacksmith baseline</h3>
+<table aria-label="Successful workflow wall time medians"><thead><tr><th>Workflow</th><th class="number">Median wall time</th><th class="number sample">Successful runs</th></tr></thead><tbody>
+<tr><td>CI</td><td class="number">8m 59s</td><td class="number sample">6</td></tr>
+<tr><td>Native packages</td><td class="number">8m 10s</td><td class="number sample">4</td></tr>
+<tr><td>Release</td><td class="number">9m 10s</td><td class="number sample">1</td></tr>
+<tr><td>Security Audit</td><td class="number">1m 41s</td><td class="number sample">8</td></tr>
+<tr><td>Dependency Review</td><td class="number">16s</td><td class="number sample">5</td></tr>
+</tbody></table>
+<p class="muted">Small transition-day sample from October 18–19. Runner-minutes add parallel jobs; wall time measures the wait for results. Billing costs were not measured.</p>
+<h3>Optimization order</h3>
+<ol class="plan">
+<li><strong>Restrict automatic installers to packaging changes.</strong> Keep CI preview executables and manual installers. On the latest ordinary code PR, this removes 19.28 runner-minutes, or 46% of execution. It does not shorten CI's parallel critical path.</li>
+<li><strong>Make caches reusable and give keys an intended writer.</strong> All six latest native jobs started cold. CI then lost three cache-save races to packaging. A warm rerun finished CI in 3m 51s, but it used a different commit.</li>
+<li><strong>Install pinned tools without recompiling them.</strong> Audit spends a median 85s installing its tool and 4s auditing. Target 20–35s overall with a verified prebuilt binary. Independently cache cargo-packager.</li>
+<li><strong>Run only the affected job groups.</strong> Script-only and unrelated workflow changes should not start a native matrix. Preserve a stable required status, all three operating systems, and legacy vault compatibility.</li>
+<li><strong>Reuse builds when automatic installers are required.</strong> Put packaging after validation in the same platform job. Latest packaging duplicated 14.13 runner-minutes of native tests and release compilation.</li>
+</ol>
+<p class="muted">Evidence: 739 run records; detailed timings for 443 jobs in 228 runs; 11 native logs. Savings overlap and are not additive. Dependency Review and release contract tests are already inexpensive.</p>
+</main></body></html>

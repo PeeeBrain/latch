@@ -7,6 +7,7 @@ on:
       - 'crates/**/Cargo.toml'
       - 'Cargo.toml'
       - 'Cargo.lock'
+      - '.cargo/audit.toml'
       - '.github/workflows/security.yml'
   pull_request:
     branches: [main, develop]
@@ -14,6 +15,7 @@ on:
       - 'crates/**/Cargo.toml'
       - 'Cargo.toml'
       - 'Cargo.lock'
+      - '.cargo/audit.toml'
       - '.github/workflows/security.yml'
   schedule:
     - cron: '17 3 * * 1'
@@ -21,6 +23,10 @@ on:
 
 permissions:
   contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.head_ref || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   dependency-audit:
@@ -32,7 +38,11 @@ jobs:
         uses: actions/checkout@v6
 
       - name: Install Cargo audit
-        run: cargo install cargo-audit --locked
+        uses: taiki-e/install-action@8cca0918f8471c33515202b73f56ab27f2bed283 # v2
+        with:
+          tool: cargo-audit@0.22.2
+          fallback: none
 
       - name: Run Cargo audit
-        run: cargo audit
+        # Calling the binary directly avoids downloading the app's pinned Rust toolchain.
+        run: cargo-audit audit --file Cargo.lock

@@ -2,6 +2,14 @@
 
 The release version comes from `crates/latch-desktop/Cargo.toml`. Keep `latch-core` at the same version. Only stable `MAJOR.MINOR.PATCH` versions are accepted.
 
+## CI previews and installer checks
+
+CI classifies changes using `.github/ci-filters.yml`. Rust source, dependency, and toolchain changes run formatting, compile checks, default and legacy vault tests, and strict Clippy on Windows, macOS ARM64, and Linux. Each platform uploads a `gpui-preview-*` executable. Script-only changes run release contract tests; workflow changes run actionlint. Documentation-only changes skip these job groups. `CI status` always runs and fails if a selected job fails or is cancelled; use it as the required CI check.
+
+Installer resources, desktop packaging configuration, and release workflow/script changes also generate unsigned installers in those same native jobs. There is no separate PR packaging matrix or second release build. For any other change that needs installer testing, dispatch CI with `package` enabled, or dispatch Native GPUI packages with its default `package` option. Enable `sign` there for a signed rehearsal.
+
+Only push CI on `main` writes the shared `native-ci` Rust cache. PRs, manual runs, and releases restore it without writing competing copies. Cargo Packager 0.11.8 has its own binary cache, independent of Latch's lockfile. The first main run after this cache change will be cold; later runs can reuse its dependencies. Cache hit/write status appears in each native job's summary, with keys and transfer details in the cache action logs. No scheduled cache-warming builds are needed.
+
 ## Before tagging
 
 1. Update both crate versions, `Cargo.lock`, `CHANGELOG.md`, and `docs/release-notes.md` in a PR. Run the checks in AGENTS.md.

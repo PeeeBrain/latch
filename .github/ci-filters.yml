@@ -1,0 +1,37 @@
+# Native validation always produces preview executables. Installers are optional.
+native:
+  - 'crates/**'
+  - '.cargo/**'
+  - 'Cargo.toml'
+  - 'Cargo.lock'
+  - 'rust-toolchain.toml'
+  - '.github/workflows/ci.yml'
+  - '.github/workflows/native-package.yml'
+  - '.github/ci-filters.yml'
+
+packages:
+  - 'crates/latch-desktop/Cargo.toml'
+  - 'crates/latch-desktop/build.rs'
+  - 'crates/latch-desktop/icons/**'
+  - 'crates/latch-desktop/updater.pub'
+  - 'crates/latch-desktop/Packager.toml'
+  - 'crates/latch-desktop/packager.json'
+  - 'scripts/release.py'
+  - '.github/workflows/native-package.yml'
+  - '.github/workflows/release.yml'
+  - '.github/ci-filters.yml'
+
+tooling:
+  - 'scripts/**'
+  - 'crates/*/Cargo.toml'
+  - 'crates/latch-desktop/updater.pub'
+  - '.github/workflows/ci.yml'
+  - '.github/workflows/native-package.yml'
+  - '.github/workflows/release.yml'
+  - '.github/ci-filters.yml'
+
+workflows:
+  - '.github/workflows/**'
+  - '.github/actions/**'
+  - '.github/actionlint.yaml'
+  - '.github/ci-filters.yml'
