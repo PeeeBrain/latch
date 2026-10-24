@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 - On Windows, minimizing or closing Latch hides it to the tray instead of leaving a taskbar button. Open it again from the tray, Ctrl+Space, or by launching Latch again. Quit from the tray; Ctrl+Q now locks and hides Latch there.
+- Quieter screens: unlock, setup, empty, and confirmation pages drop their large icon tiles, and a clean health check reads as plain text instead of a green badge.
+- Edit page messages appear once, in the footer, instead of also inline in amber.
+
+### Fixed
+- Placeholder text and dark-mode primary button hover in the default colors now meet WCAG AA contrast.
 
 ## [0.3.3] - 2026-10-20
 

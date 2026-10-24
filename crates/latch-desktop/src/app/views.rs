@@ -252,7 +252,7 @@ impl Latch {
                     .flex_shrink_0()
                     .flex()
                     .justify_end()
-                    .text_size(px(ui::TEXT_SM + 0.5))
+                    .text_size(px(ui::TEXT_SM))
                     .text_color(p.color(Color::Muted))
                     .child(label),
             )
@@ -323,7 +323,7 @@ impl Latch {
         } else {
             bar.child(self.back_button(p, cx)).child(
                 div()
-                    .text_size(px(ui::TEXT_LG - 1.))
+                    .text_size(px(ui::TEXT_LG))
                     .font_weight(FontWeight::MEDIUM)
                     .child(heading),
             )
@@ -388,9 +388,8 @@ impl Latch {
             .flex_1()
             .overflow_hidden()
             .text_size(px(ui::TEXT_SM))
-            .when_some(status.clone(), |left, (_, text)| left.aria_label(text))
-            .map(|left| match status {
-                Some((icon, text)) => left
+            .when_some(status, |left, (icon, text)| {
+                left.aria_label(text.clone())
                     .text_color(p.color(Color::Text))
                     .child(div().text_color(p.color(Color::Link)).child(icon))
                     .child(
@@ -399,11 +398,7 @@ impl Latch {
                             .whitespace_nowrap()
                             .text_ellipsis()
                             .child(text),
-                    ),
-                None => left
-                    .text_color(p.color(Color::FooterText))
-                    .child(Icon::LockKeyhole)
-                    .child("Latch"),
+                    )
             });
         let link = |id: &'static str| {
             let hover = ui::wash(p, 0.07);
@@ -527,65 +522,36 @@ impl Latch {
         let (title, caption, action) = match self.page {
             Page::Setup => (
                 "Create your vault",
-                "Your vault is encrypted and stored only on this device. There is no password recovery, so choose a password you will remember.",
+                "Stored only on this device. There is no password recovery.",
                 "Create vault",
             ),
             Page::Rotate => (
                 "",
-                "Use 12 or more characters. The vault is re-encrypted with the new password immediately.",
+                "Use 12 or more characters. The vault is re-encrypted immediately.",
                 "Change password",
             ),
-            _ if self.biometric => (
-                "Unlock Latch",
-                "This vault is protected by a key stored on this device. You can switch to a master password in Settings.",
-                "Unlock with device key",
-            ),
-            _ => (
-                "Unlock Latch",
-                "Enter your master password to decrypt your vault.",
-                "Unlock",
-            ),
+            _ if self.biometric => ("Unlock Latch", "", "Unlock with device key"),
+            _ => ("Unlock Latch", "", "Unlock"),
         };
-        let accent = p.color(Color::Link);
         let mut stack = div()
             .w_full()
             .max_w(px(340.))
             .flex()
             .flex_col()
             .gap(px(10.));
-        if self.page != Page::Rotate {
+        if !title.is_empty() {
             stack = stack.child(
                 div()
-                    .flex()
-                    .flex_col()
-                    .items_center()
-                    .gap(px(10.))
-                    .pb(px(4.))
-                    .child(
-                        div()
-                            .size(px(44.))
-                            .rounded(px(12.))
-                            .flex()
-                            .items_center()
-                            .justify_center()
-                            .bg(accent.opacity(0.14))
-                            .text_color(accent)
-                            .text_size(px(20.))
-                            .child(if self.biometric && self.page == Page::Locked {
-                                Icon::FingerprintPattern
-                            } else {
-                                Icon::LockKeyhole
-                            }),
-                    )
-                    .child(
-                        div()
-                            .text_size(px(18.))
-                            .font_weight(FontWeight::SEMIBOLD)
-                            .child(title),
-                    ),
+                    .text_center()
+                    .text_size(px(ui::TEXT_LG))
+                    .font_weight(FontWeight::SEMIBOLD)
+                    .child(title),
             );
         }
-        stack = stack.child(muted(p, caption).text_center().pb(px(6.)));
+        if !caption.is_empty() {
+            stack = stack.child(muted(p, caption).text_center());
+        }
+        stack = stack.child(div().h(px(6.)));
         if !self.blocked {
             for field in &self.fields {
                 self.page_stops
@@ -642,13 +608,7 @@ impl Latch {
                     .items_center()
                     .gap(px(6.))
                     .py(px(28.))
-                    .child(
-                        ui::tile(p, Icon::KeyRound, Some(p.color(Color::Link)))
-                            .size(px(36.))
-                            .rounded(px(10.))
-                            .text_size(px(17.)),
-                    )
-                    .child(div().pt(px(4.)).child("No credentials yet"))
+                    .child("No credentials yet")
                     .child(
                         div()
                             .flex()
@@ -762,20 +722,10 @@ impl Latch {
             };
             form = form.child(self.form_row(p, label, field.clone(), Some(stop), Some(action)));
         }
-        form = form.child(
-            div().pl(px(8. + 104. + 12.)).pt(px(2.)).child(muted(
-                p,
-                "Website and authenticator are optional. Websites default to HTTPS. The authenticator accepts a secret or an otpauth:// URI.",
-            )),
-        );
-        if !self.notice.is_empty() {
-            form = form.child(
-                div()
-                    .pl(px(8. + 104. + 12.))
-                    .pr(px(8.))
-                    .child(muted(p, self.notice.clone()).text_color(p.color(Color::Warning))),
-            );
-        }
+        form = form.child(div().pl(px(8. + 104. + 12.)).pt(px(2.)).child(muted(
+            p,
+            "Websites default to HTTPS. The authenticator accepts a secret or an otpauth:// URI.",
+        )));
         body = body.child(form);
         body
     }
@@ -1000,7 +950,6 @@ impl Latch {
         cancel: &'static str,
         cx: &mut Context<Self>,
     ) -> Stateful<Div> {
-        let error = p.color(Color::Error);
         body.child(
             div()
                 .flex()
@@ -1017,14 +966,7 @@ impl Latch {
                         .items_center()
                         .gap(px(8.))
                         .child(
-                            ui::tile(p, Icon::TriangleAlert, Some(error))
-                                .size(px(40.))
-                                .rounded(px(11.))
-                                .text_size(px(18.)),
-                        )
-                        .child(
                             div()
-                                .pt(px(4.))
                                 .text_size(px(ui::TEXT_LG))
                                 .font_weight(FontWeight::SEMIBOLD)
                                 .text_center()
@@ -1463,17 +1405,9 @@ impl Latch {
         if count == 0 {
             body = body.child(ui::section(p, "Issues")).child(
                 div()
-                    .flex()
-                    .items_center()
-                    .gap(px(10.))
-                    .h(px(ui::ROW))
                     .px(px(8.))
-                    .child(ui::tile(
-                        p,
-                        Icon::ShieldCheck,
-                        Some(p.color(Color::Success)),
-                    ))
-                    .child("No weak or reused passwords found"),
+                    .py(px(6.))
+                    .child(muted(p, "No weak or reused passwords")),
             );
             return body;
         }
@@ -1536,7 +1470,7 @@ impl Latch {
                     .gap(px(10.))
                     .h(px(ui::ROW))
                     .px(px(8.))
-                    .child(ui::tile(p, Icon::AtSign, Some(p.color(Color::Link))))
+                    .child(ui::tile(p, Icon::AtSign, None))
                     .child(div().flex_1().min_w_0().child(id.clone()))
                     .when(default, |row| row.child(ui::tag(p, "Default")))
                     .when(!default, |row| {
