@@ -1707,7 +1707,7 @@ impl Latch {
             .border_color(border)
             .bg(background)
             .text_color(text)
-            .text_size(px(ui::TEXT_SM + 0.5))
+            .text_size(px(ui::TEXT_SM))
             .line_height(px(18.))
             .font_weight(FontWeight::MEDIUM)
             .cursor_pointer()
