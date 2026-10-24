@@ -20,8 +20,8 @@ Only push CI on `main` writes the shared `native-ci` Rust cache. PRs, manual run
    ```sh
    git switch main
    git pull --ff-only
-   git tag -a v0.3.3 -m "Latch 0.3.3"
-   git push origin v0.3.3
+   git tag -a v0.3.4 -m "Latch 0.3.4"
+   git push origin v0.3.4
    ```
 
 The workflow checks that the tag matches the Cargo version, resolves to the checkout, and is reachable from `origin/main`. Do not move published tags. The workflow never creates version commits or tags automatically. Maintainers can retry an existing tag with Release > Run workflow, using the same tag as input.
