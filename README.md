@@ -50,7 +50,7 @@ Latch opens one command window. Create or unlock a vault, then type to filter cr
 
 Native access supports a master password and device-key access through Windows Hello or macOS Keychain on supported devices. The app also provides timed password reveal, TOTP codes, configurable password generation, SimpleLogin/DuckDuckGo aliases, local password health checks, optional HIBP breach checks, and password/device-key rotation.
 
-The vault locks after 30 minutes of inactivity. Copied secrets clear after 30 seconds if Latch still owns that clipboard content. On Windows/macOS, closing the window locks the vault and hides it to the tray when tray initialization succeeds. On Linux, closing quits the app.
+The vault locks after 30 minutes of inactivity. Copied secrets clear after 30 seconds if Latch still owns that clipboard content. On Windows/macOS, closing the window locks the vault and hides it to the tray when tray initialization succeeds. On Windows, minimizing or closing also removes Latch from the taskbar, and Quit lives in the tray menu. On Linux, closing quits the app.
 
 Credential rows and details load favicons directly from the saved website's HTTPS `/favicon.ico`, including redirects to public HTTPS image hosts. Latch strips the saved URL's path and query, sends no vault credentials or cookies, and uses no third-party favicon service. Icons and failed lookups stay in memory until lock. Missing URLs, unavailable icons, and private-network sites keep their initial tile. Requests bypass system proxies so destination checks apply to the actual connection. Sites that require a proxy or only declare icons in HTML keep their initial tile too.
 

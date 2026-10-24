@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- On Windows, minimizing or closing Latch hides it to the tray instead of leaving a taskbar button. Open it again from the tray, Ctrl+Space, or by launching Latch again. Quit from the tray; Ctrl+Q now locks and hides Latch there.
+
 ## [0.3.3] - 2026-10-20
 
 ### Changed

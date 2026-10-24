@@ -333,12 +333,17 @@ impl Latch {
         window.on_window_should_close(cx, move |window, cx| {
             let _ = view.update(cx, |this, cx| this.lock(window, cx));
             if crate::integration::has_tray(cx) {
-                window.minimize_window();
+                crate::integration::dismiss(window, cx);
                 false
             } else {
                 true
             }
         });
+        #[cfg(target_os = "windows")]
+        cx.observe_window_visibility(window, |_, _, window, cx| {
+            crate::integration::hide_if_minimized(window, cx);
+        })
+        .detach();
         cx.on_release(|this, cx| {
             this.epoch.fetch_add(1, Ordering::SeqCst);
             this.clear_clipboard(cx);
@@ -375,10 +380,9 @@ impl Latch {
         cx: &mut Context<Self>,
     ) {
         match command {
-            "toggle" if window.is_window_active() => window.minimize_window(),
+            "toggle" if window.is_window_active() => crate::integration::dismiss(window, cx),
             "show" | "toggle" => {
-                window.activate_window();
-                cx.activate(true);
+                crate::integration::present(window, cx);
                 self.focus_first(window, cx);
             }
             "lock" => self.lock(window, cx),
@@ -1318,13 +1322,13 @@ impl Latch {
             return;
         }
         if matches!(self.page, Page::Locked | Page::Setup) {
-            window.minimize_window();
+            crate::integration::dismiss(window, cx);
             return;
         }
         if self.page == Page::Browse {
             if self.query.read(cx).value().is_empty() {
-                // Ctrl+Space brings Latch back; Ctrl+Q quits.
-                window.minimize_window();
+                // Ctrl+Space brings Latch back.
+                crate::integration::dismiss(window, cx);
             } else {
                 self.query
                     .update(cx, |query, cx| query.set_value(String::new(), cx));
