@@ -79,6 +79,7 @@ We need to be on the same page with terminology. When communicating, use this la
 - One concern per PR. If the description says "also", split it.
 - Add user-visible changes under `## [Unreleased]` in `CHANGELOG.md`. Update `README.md` only if documented behavior changed.
 - Do not bump Cargo versions in ordinary PRs. Releases start only from a maintainer-pushed `vX.Y.Z` tag on `main` (see `docs/releases.md`).
+- Before opening a PR for a feature or fix, ask the developer whether it should ship in a new release. If yes, include the release prep from `docs/releases.md` > Before tagging: bump both crate versions, `Cargo.lock`, the `CHANGELOG.md` heading, and `docs/release-notes.md`. The Release workflow rejects a tag that doesn't match the Cargo version, so tagging without this prep fails.
 - When babysitting: poll checks and comments newer than the last push, verify each bot finding against the source, fix real ones, dismiss false positives with a written reason. Stay quiet when nothing is new. Stop when checks are green on the latest commit.
 
 ## How it works
