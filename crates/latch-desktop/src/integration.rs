@@ -2,7 +2,7 @@ use global_hotkey::{
     GlobalHotKeyEvent, GlobalHotKeyManager, HotKeyState,
     hotkey::{Code, HotKey, Modifiers},
 };
-use gpui_kit::{AnyWindowHandle, App, Entity, Global};
+use gpui_kit::{AnyWindowHandle, App, Entity, Global, Window};
 use std::{
     sync::{
         Arc,
@@ -13,6 +13,10 @@ use std::{
 use tray_icon::{
     Icon, TrayIcon, TrayIconBuilder,
     menu::{Menu, MenuEvent, MenuItem},
+};
+#[cfg(target_os = "windows")]
+use windows::Win32::UI::WindowsAndMessaging::{
+    IsIconic, IsWindowVisible, SW_HIDE, SW_RESTORE, SW_SHOW, ShowWindow,
 };
 
 pub struct Integration {
@@ -132,4 +136,87 @@ pub fn has_tray(cx: &App) -> bool {
     }
     cx.try_global::<Integration>()
         .is_some_and(|integration| integration.tray_available.load(Ordering::SeqCst))
+}
+
+/// Takes the window off screen. With a tray on Windows it is hidden outright so
+/// the taskbar button and Alt+Tab entry go too; otherwise it is minimized.
+#[cfg_attr(not(target_os = "windows"), allow(unused_variables))]
+pub fn dismiss(window: &mut Window, cx: &App) {
+    #[cfg(target_os = "windows")]
+    if has_tray(cx)
+        && let Some(hwnd) = hwnd(window)
+    {
+        // SAFETY: `hwnd` is the live GPUI window, used on its own thread.
+        let _ = unsafe { ShowWindow(hwnd, SW_HIDE) };
+        return;
+    }
+    window.minimize_window();
+}
+
+/// Hides a window the platform minimized (title bar button, Win+Down) so it
+/// leaves the taskbar the same way `dismiss` does.
+#[cfg(target_os = "windows")]
+pub fn hide_if_minimized(window: &Window, cx: &App) {
+    if has_tray(cx)
+        && let Some(hwnd) = hwnd(window)
+    {
+        // SAFETY: `hwnd` is the live GPUI window, used on its own thread.
+        unsafe {
+            if IsIconic(hwnd).as_bool() && IsWindowVisible(hwnd).as_bool() {
+                let _ = ShowWindow(hwnd, SW_HIDE);
+            }
+        }
+    }
+}
+
+/// Shows and focuses the window, undoing `dismiss` or a minimize.
+pub fn present(window: &mut Window, cx: &mut App) {
+    #[cfg(target_os = "windows")]
+    if let Some(hwnd) = hwnd(window) {
+        show(hwnd);
+    }
+    window.activate_window();
+    cx.activate(true);
+}
+
+/// Brings an already running Latch forward when a second launch loses the
+/// process lock. A hidden Latch has no taskbar button, so launching it again
+/// from Start is how users expect to get it back.
+#[cfg(target_os = "windows")]
+pub fn present_running_instance() {
+    use windows::{
+        Win32::UI::WindowsAndMessaging::{FindWindowW, SetForegroundWindow},
+        core::w,
+    };
+    // GPUI's window class plus the title set in `main`.
+    // SAFETY: Win32 lookups on a handle that is only passed back to Win32.
+    if let Ok(hwnd) = unsafe { FindWindowW(w!("Zed::Window"), w!("Latch")) } {
+        show(hwnd);
+        // SAFETY: as above. A process the user just launched may take focus.
+        let _ = unsafe { SetForegroundWindow(hwnd) };
+    }
+}
+
+/// Restores a minimized window (hidden or not) and shows a hidden one.
+#[cfg(target_os = "windows")]
+fn show(hwnd: windows::Win32::Foundation::HWND) {
+    // SAFETY: Win32 visibility calls; a stale handle only makes them fail.
+    unsafe {
+        if IsIconic(hwnd).as_bool() {
+            let _ = ShowWindow(hwnd, SW_RESTORE);
+        } else if !IsWindowVisible(hwnd).as_bool() {
+            let _ = ShowWindow(hwnd, SW_SHOW);
+        }
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn hwnd(window: &Window) -> Option<windows::Win32::Foundation::HWND> {
+    use raw_window_handle::{HasWindowHandle, RawWindowHandle};
+    match HasWindowHandle::window_handle(window).ok()?.as_raw() {
+        RawWindowHandle::Win32(handle) => Some(windows::Win32::Foundation::HWND(
+            handle.hwnd.get() as *mut std::ffi::c_void
+        )),
+        _ => None,
+    }
 }

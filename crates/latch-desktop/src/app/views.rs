@@ -1971,7 +1971,12 @@ impl Render for Latch {
             .capture_any_mouse_down(cx.listener(|this, _, window, cx| this.activity(window, cx)))
             .on_action(cx.listener(|this, _: &Quit, window, cx| {
                 this.lock(window, cx);
-                cx.quit();
+                // With a Windows tray, Latch quits only from the tray menu.
+                if cfg!(target_os = "windows") && crate::integration::has_tray(cx) {
+                    crate::integration::dismiss(window, cx);
+                } else {
+                    cx.quit();
+                }
             }))
             .on_action(cx.listener(Self::back))
             .on_action(cx.listener(|this, _: &SaveCredential, window, cx| {

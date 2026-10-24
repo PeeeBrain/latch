@@ -32,6 +32,8 @@ fn main() {
     let process_lock = match storage.acquire_process_lock() {
         Ok(lock) => lock,
         Err(error) => {
+            #[cfg(target_os = "windows")]
+            integration::present_running_instance();
             eprintln!("{error}");
             return;
         }
