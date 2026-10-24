@@ -221,7 +221,7 @@ Compact and tactile: small dense targets, with clear hover and press tone shifts
 
 ### Navigation
 - **Header:** 52px, with a hairline beneath. On Browse it holds the search field and the item count; elsewhere a 26px back chip (6% wash, chevron) and the page title. Escape always goes back.
-- **Footer:** 38px, with a hairline above. On the left, a status line (Cobalt Link icon plus text) that is empty when idle. On the right, the Enter action label with its key, a divider, and "Actions" with Ctrl/Cmd+K. On pages without a primary action it shows "Navigate ↑ ↓ Select Enter".
+- **Footer:** 38px, with a hairline above. On the left, a status line (Cobalt Link icon plus text) that is empty when idle and on pages that show notices inline. On the right, the Enter action label with its key, a divider, and "Actions" with Ctrl/Cmd+K. On pages without a primary action it shows "Navigate ↑ ↓ Select Enter".
 - **Section labels:** 12px medium muted text, sentence case, 10px above and 4px below.
 
 ### Actions Popover
@@ -233,9 +233,9 @@ Compact and tactile: small dense targets, with clear hover and press tone shifts
 - **Do** keep every screen inside the header/list/footer frame, and make the footer tell the truth about what Enter does.
 - **Do** use Cobalt Edge only for the primary button, focus, and checked state, on well under 10% of the screen.
 - **Do** express hover, selection, and borders as low-alpha washes so imported themes keep the hierarchy.
-- **Do** hold 4.5:1 contrast for text, placeholders, and button labels in both fallback palettes. `Palette::button_text` and `low_contrast` enforce it for imported themes.
+- **Do** hold 4.5:1 contrast for text, placeholders, and button labels in both fallback palettes. For imported themes, `Palette::button_text` picks readable primary-button labels. `low_contrast` warns about four text/background pairs in Preview; it does not change colors or check placeholders.
 - **Do** say "nothing wrong" in plain muted text, and keep status color for real state.
-- **Do** route transient messages through the footer status line, the single status channel. Only auth pages, which have no status line, show notices inline.
+- **Do** show each message once. The footer status line is the default channel; auth pages and Edit show notices inline instead (Edit so long validation messages wrap rather than truncate beside Save), and leave the footer status empty.
 - **Do** keep copy terse. Placeholders already say "(optional)", so the captions below don't repeat it.
 
 ### Don't:

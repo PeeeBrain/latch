@@ -372,7 +372,10 @@ impl Latch {
         let status: Option<(Icon, String)> = if self.busy {
             Some((Icon::RefreshCw, "Working…".into()))
         } else if !self.notice.is_empty()
-            && !matches!(self.page, Page::Locked | Page::Setup | Page::Rotate)
+            && !matches!(
+                self.page,
+                Page::Locked | Page::Setup | Page::Rotate | Page::Edit
+            )
         {
             Some((Icon::Info, self.notice.clone()))
         } else {
@@ -726,6 +729,17 @@ impl Latch {
             p,
             "Websites default to HTTPS. The authenticator accepts a secret or an otpauth:// URI.",
         )));
+        // Edit owns its notice so long validation messages wrap instead of
+        // truncating in the footer beside Save.
+        if !self.notice.is_empty() {
+            form = form.child(
+                div()
+                    .pl(px(8. + 104. + 12.))
+                    .pr(px(8.))
+                    .text_size(px(ui::TEXT_SM))
+                    .child(self.notice.clone()),
+            );
+        }
         body = body.child(form);
         body
     }
