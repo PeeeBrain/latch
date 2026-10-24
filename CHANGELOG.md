@@ -16,6 +16,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 - Placeholder text and dark-mode primary button hover in the default colors now meet WCAG AA contrast.
+- Update TLS certificate verification (rustls-webpki, webpki-roots) so update checks and favicons no longer trust distrusted intermediate certificates (RUSTSEC-2026-0381, RUSTSEC-2026-0382).
 
 ## [0.3.3] - 2026-10-20
 
