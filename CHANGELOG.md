@@ -16,7 +16,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 - On Linux, Latch draws its own window frame instead of getting a second title bar from the desktop (KDE).
 - On Linux (Wayland), copying no longer reports "Clipboard unavailable" when it succeeded, and copied values clear after 30 seconds again.
-- Ctrl+Space shows and hides Latch on Linux Wayland. Latch binds it through the desktop's GlobalShortcuts portal and raises its window with the desktop's activation token, and Settings no longer claims a shortcut that never fires.
+- Ctrl+Space shows and hides Latch on Linux Wayland. Latch binds it through the desktop's GlobalShortcuts portal and raises its window with the desktop's activation token, falling back to KWin on KDE when no usable token is supplied, and Settings no longer claims a shortcut that never fires.
 
 ## [0.3.4] - 2026-10-24
 

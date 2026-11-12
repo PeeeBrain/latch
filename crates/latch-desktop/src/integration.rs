@@ -328,7 +328,7 @@ pub fn hide_if_minimized(window: &Window, cx: &App) {
 }
 
 /// Shows and focuses the window, undoing `dismiss` or a minimize. Wayland only
-/// raises it with an activation `token` from the shortcut press.
+/// raises it with an activation `token` or KDE's PID-checked fallback.
 pub fn present(window: &mut Window, token: Option<String>, cx: &mut App) {
     #[cfg(target_os = "windows")]
     if let Some(hwnd) = hwnd(window) {
@@ -337,9 +337,76 @@ pub fn present(window: &mut Window, token: Option<String>, cx: &mut App) {
     match token {
         #[cfg(target_os = "linux")]
         Some(token) if wayland::activate(window, &token) => {}
-        _ => window.activate_window(),
+        _ => {
+            window.activate_window();
+            #[cfg(target_os = "linux")]
+            if std::env::var("XDG_CURRENT_DESKTOP").is_ok_and(|desktop| {
+                desktop
+                    .split(':')
+                    .any(|name| name.eq_ignore_ascii_case("KDE"))
+            }) {
+                cx.background_executor()
+                    .spawn(async {
+                        if let Err(error) = kwin_activate().await {
+                            eprintln!("KWin activation failed: {error}");
+                        }
+                    })
+                    .detach();
+            }
+        }
     }
     cx.activate(true);
+}
+
+// KDE's shortcut portal can omit the token; only raise a window owned by us.
+#[cfg(target_os = "linux")]
+async fn kwin_activate() -> ashpd::zbus::Result<()> {
+    use ashpd::zbus::{Connection, Proxy, zvariant::OwnedValue};
+    use std::collections::HashMap;
+    let connection = Connection::session().await?;
+    let runner = Proxy::new(
+        &connection,
+        "org.kde.KWin",
+        "/WindowsRunner",
+        "org.kde.krunner1",
+    )
+    .await?;
+    let kwin = Proxy::new(&connection, "org.kde.KWin", "/KWin", "org.kde.KWin").await?;
+    type Match = (
+        String,
+        String,
+        String,
+        i32,
+        f64,
+        HashMap<String, OwnedValue>,
+    );
+    let matches: Vec<Match> = runner.call("Match", &("Latch",)).await?;
+    for (id, ..) in matches {
+        let Some((_, uuid)) = id.split_once('_') else {
+            continue;
+        };
+        if uuid.contains('_') || !uuid.starts_with('{') || !uuid.ends_with('}') {
+            continue;
+        }
+        let info: HashMap<String, OwnedValue> = match kwin.call("getWindowInfo", &(uuid,)).await {
+            Ok(info) => info,
+            Err(error) => {
+                eprintln!("KWin window info failed: {error}");
+                continue;
+            }
+        };
+        if info
+            .get("pid")
+            .and_then(|pid| i32::try_from(pid).ok())
+            .and_then(|pid| u32::try_from(pid).ok())
+            == Some(std::process::id())
+        {
+            // WindowsRunnerAction::ActivateAction is 0; discard Match's action.
+            let (): () = runner.call("Run", &(format!("0_{uuid}"), "")).await?;
+            break;
+        }
+    }
+    Ok(())
 }
 
 /// Raises the window with an xdg-activation token another process handed over
