@@ -266,7 +266,11 @@ impl Latch {
             Ok(None) => (Page::Setup, String::new(), false, false),
             Ok(Some(header)) if matches!(header.kdf.as_str(), "password-pbkdf2" | "argon2id") => (Page::Locked, String::new(), false, false),
             Ok(Some(header)) if header.kdf.starts_with("oauth-") => (Page::Locked, "This Google vault needs migration in the previous Latch app. Your vault has not been changed.".into(), true, false),
-            Ok(Some(header)) if header.kdf == "biometric-keychain" => (Page::Locked, String::new(), !crate::biometric::supported(), true),
+            Ok(Some(header)) if header.kdf == "biometric-keychain" => match crate::biometric::supported() {
+                true => (Page::Locked, String::new(), false, true),
+                // Only Linux gets here: the polkit policy isn't installed.
+                false => (Page::Locked, "Device key unlock needs Latch's system policy. See the README to install it. Your vault has not been changed.".into(), true, true),
+            },
             Ok(Some(_)) => (Page::Locked, "This vault needs a compatible Latch release. Your vault has not been changed.".into(), true, false),
             Err(error) => (Page::Locked, error, true, false),
         }

@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE policyconfig PUBLIC "-//freedesktop//DTD PolicyKit Policy Configuration 1.0//EN"
+ "http://www.freedesktop.org/standards/PolicyKit/1/policyconfig.dtd">
+<!-- Gates Latch device-key unlock on Linux. auth_self runs the user's own PAM
+     stack (fingerprint, then login password) on every unlock; no _keep, so a
+     fresh lock always asks again. Installed to /usr/share/polkit-1/actions/. -->
+<policyconfig>
+  <vendor>Latch</vendor>
+  <vendor_url>https://github.com/PeeeBrain/latch</vendor_url>
+  <action id="com.latch.vault.unlock">
+    <description>Unlock Latch</description>
+    <message>Authenticate to unlock your Latch vault</message>
+    <icon_name>dialog-password</icon_name>
+    <defaults>
+      <allow_any>no</allow_any>
+      <allow_inactive>no</allow_inactive>
+      <allow_active>auth_self</allow_active>
+    </defaults>
+  </action>
+</policyconfig>

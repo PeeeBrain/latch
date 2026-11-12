@@ -34,7 +34,7 @@ We need to be on the same page with terminology. When communicating, use this la
 - **Vault** means the encrypted file on disk (`vault.enc`): auth metadata plus ciphertext. Not "store", "database", or "file".
 - **Workspace** means the in-memory decrypted state (Credentials plus the session key). It exists only during a Session. Never call it "vault".
 - **Credential** means one stored login. Not "entry", "record", or "item".
-- **AuthMethod** means how a Vault is provisioned and accessed: `Password` (master password + PBKDF2) or `Biometric`, which users see as "device key" (Windows Hello / macOS Keychain).
+- **AuthMethod** means how a Vault is provisioned and accessed: `Password` (master password + PBKDF2) or `Biometric`, which users see as "device key" (Windows Hello / macOS Keychain / Linux polkit + Secret Service).
 - **Provision / Access / Rotate**: create a new Vault / unlock an existing one into a Workspace / re-encrypt with a new key or AuthMethod without touching Credentials.
 - **Session** means the 30-minute window during which a Workspace exists. It auto-locks on expiry, on lock, or on window close (Windows/macOS).
 - **Lockout** means exponential backoff after failed Access: 5s base, doubling, 5 min max.
@@ -88,7 +88,7 @@ We need to be on the same page with terminology. When communicating, use this la
 
 Every Vault operation goes through `latch-core`'s **VaultCoordinator**. On **Access** it checks **Lockout**, reads `vault.enc` via `VaultStorage`, derives the key with the Vault's **AuthMethod**, decrypts into the **Workspace**, and schedules **Session** expiry. All later reads and writes go through `with_vault`, so Session timing stays in one place. On lock or expiry the Workspace and key are dropped (`zeroize`).
 
-**Device key** (`biometric.rs`) stores the Vault key in Windows Hello / macOS Keychain under fixed identifiers. Changing those identifiers locks users out.
+**Device key** (`biometric.rs`) stores the Vault key in Windows Hello / macOS Keychain / the Linux login keyring (Secret Service) under fixed identifiers. Changing those identifiers locks users out. On Linux the fingerprint is a polkit presence gate (`com.latch.vault.unlock`, policy in `crates/latch-desktop/linux/`), not a hardware-bound key; see `docs/adr/0003-linux-device-key.md`.
 
 The network is touched only at the edges: favicons (`favicon.rs`, direct HTTPS, no private-network targets), optional HIBP breach checks (`vault_health/breach_checker.rs`), email alias providers (`vault/alias.rs`), and the signed updater (`update.rs`, pinned public key, separate from the retired Tauri feed). None of these send Vault data.
 

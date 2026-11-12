@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- Device-key unlock on Linux. Latch asks for your fingerprint through the desktop's polkit prompt, falling back to your login password, and keeps the key in the login keyring. The deb installs the required policy; AppImage users install it once (see README).
+
 ### Changed
 - Breach checks reuse a network connection across Credentials, and full health reports analyze each password's strength once.
 

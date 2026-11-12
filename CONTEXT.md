@@ -17,7 +17,7 @@ A single stored login: id, title, username, password, url, and icon_url.
 _Avoid_: entry, record, item
 
 **AuthMethod**:
-How a Vault was provisioned and must be accessed: **Password** (master password + PBKDF2) or **Biometric** (device key in the OS keychain).
+How a Vault was provisioned and must be accessed: **Password** (master password + PBKDF2) or **Biometric** (device key in the OS keychain: Windows Hello, macOS Keychain, or the Linux login keyring behind a polkit prompt).
 _Avoid_: KDF, auth type, login method
 
 **Provision**:
