@@ -113,7 +113,10 @@ mod tests {
             "exp": SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs() + 3600,
             "iss": "https://accounts.google.com",
         });
-        if let Ok(client_id) = env::var("LATCH_OAUTH_CLIENT_ID") {
+        if let Some(client_id) = env::var("LATCH_OAUTH_CLIENT_ID")
+            .ok()
+            .filter(|id| !id.is_empty())
+        {
             claims["aud"] = json!(client_id);
         }
         if let Some(sub) = sub {
@@ -134,7 +137,10 @@ mod tests {
     #[test]
     fn test_decode_id_token_rejects_incomplete_claims() {
         let incomplete = json!({ "sub": "1234567890" });
-        let incomplete = if let Ok(client_id) = env::var("LATCH_OAUTH_CLIENT_ID") {
+        let incomplete = if let Some(client_id) = env::var("LATCH_OAUTH_CLIENT_ID")
+            .ok()
+            .filter(|id| !id.is_empty())
+        {
             json!({ "sub": "1234567890", "aud": client_id })
         } else {
             incomplete
