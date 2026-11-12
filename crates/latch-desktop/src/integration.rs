@@ -48,8 +48,9 @@ enum PortalEvent {
 /// get a global shortcut on Wayland, and forwards presses until the session ends.
 #[cfg(target_os = "linux")]
 async fn portal_shortcut(events: std::sync::mpsc::Sender<PortalEvent>) -> ashpd::Result<()> {
-    use ashpd::desktop::global_shortcuts::{GlobalShortcuts, NewShortcut};
+    use ashpd::desktop::global_shortcuts::{GlobalShortcuts, NewShortcut, Shortcut};
     use ashpd::zbus::export::futures_core::Stream;
+    use std::task::Poll;
     // Registering the host app id must be the first portal call on a
     // connection, and GPUI has already used its own, so this one is fresh.
     let connection = ashpd::zbus::Connection::session().await?;
@@ -68,25 +69,38 @@ async fn portal_shortcut(events: std::sync::mpsc::Sender<PortalEvent>) -> ashpd:
         .await?
         .response()?;
     let mut activated = std::pin::pin!(portal.receive_activated().await?);
-    let trigger = bound
-        .shortcuts()
-        .iter()
-        .find(|shortcut| shortcut.id() == "toggle")
-        .map(|shortcut| shortcut.trigger_description().to_owned())
-        .unwrap_or_default();
-    let _ = events.send(PortalEvent::Bound(trigger));
-    while let Some(press) = std::future::poll_fn(|cx| activated.as_mut().poll_next(cx)).await {
-        if press.shortcut_id() != "toggle" {
-            continue;
-        }
-        let token = press
-            .options()
-            .get("activation_token")
-            .and_then(|token| <&str>::try_from(&**token).ok())
-            .map(str::to_owned);
-        if events.send(PortalEvent::Activated(token)).is_err() {
-            break;
-        }
+    // The user can change or clear the key in the desktop's shortcut settings.
+    let mut changed = std::pin::pin!(portal.receive_shortcuts_changed().await?);
+    // Empty when no key is assigned.
+    let trigger = |shortcuts: &[Shortcut]| {
+        shortcuts
+            .iter()
+            .find(|shortcut| shortcut.id() == "toggle")
+            .map(|shortcut| shortcut.trigger_description().to_owned())
+            .unwrap_or_default()
+    };
+    let mut next = Some(PortalEvent::Bound(trigger(bound.shortcuts())));
+    // Toggle is the only shortcut bound, so every activation is a toggle.
+    while let Some(event) = next
+        && events.send(event).is_ok()
+    {
+        next = std::future::poll_fn(|cx| {
+            if let Poll::Ready(change) = changed.as_mut().poll_next(cx) {
+                return Poll::Ready(change.map(|c| PortalEvent::Bound(trigger(c.shortcuts()))));
+            }
+            activated.as_mut().poll_next(cx).map(|press| {
+                press.map(|press| {
+                    PortalEvent::Activated(
+                        press
+                            .options()
+                            .get("activation_token")
+                            .and_then(|token| <&str>::try_from(&**token).ok())
+                            .map(str::to_owned),
+                    )
+                })
+            })
+        })
+        .await;
     }
     Ok(())
 }
