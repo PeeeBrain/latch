@@ -1,6 +1,4 @@
-use super::{storage::VaultStorage, workspace::Workspace, Entry, VaultData};
-use crate::crypto::aead;
-use zeroize::Zeroizing;
+use super::{storage::VaultStorage, workspace::Workspace, Entry};
 
 pub fn add(
     workspace: &mut Workspace,
@@ -18,7 +16,7 @@ pub fn add(
     }
     workspace.refresh();
     workspace.credentials.push(entry);
-    if let Err(error) = persist(workspace, storage) {
+    if let Err(error) = workspace.persist(storage) {
         workspace.credentials.pop();
         return Err(error);
     }
@@ -26,8 +24,7 @@ pub fn add(
 }
 
 pub fn get_full(workspace: &mut Workspace, id: &str) -> Result<Entry, String> {
-    workspace.check_session()?;
-    workspace.refresh();
+    workspace.check_and_refresh()?;
     workspace
         .credentials
         .iter()
@@ -41,8 +38,7 @@ pub fn update(
     storage: &VaultStorage,
     mut entry: Entry,
 ) -> Result<(), String> {
-    workspace.check_session()?;
-    workspace.refresh();
+    workspace.check_and_refresh()?;
     let idx = workspace
         .credentials
         .iter()
@@ -56,7 +52,7 @@ pub fn update(
     }
     validate(&mut entry)?;
     let previous = std::mem::replace(&mut workspace.credentials[idx], entry);
-    if let Err(error) = persist(workspace, storage) {
+    if let Err(error) = workspace.persist(storage) {
         workspace.credentials[idx] = previous;
         return Err(error);
     }
@@ -64,15 +60,14 @@ pub fn update(
 }
 
 pub fn delete(workspace: &mut Workspace, storage: &VaultStorage, id: &str) -> Result<(), String> {
-    workspace.check_session()?;
-    workspace.refresh();
+    workspace.check_and_refresh()?;
     let index = workspace
         .credentials
         .iter()
         .position(|entry| entry.id == id)
         .ok_or("Credential not found")?;
     let previous = workspace.credentials.remove(index);
-    if let Err(error) = persist(workspace, storage) {
+    if let Err(error) = workspace.persist(storage) {
         workspace.credentials.insert(index, previous);
         return Err(error);
     }
@@ -129,8 +124,7 @@ fn validate(entry: &mut Entry) -> Result<(), String> {
 }
 
 pub fn get_field(workspace: &mut Workspace, id: &str, field: &str) -> Result<String, String> {
-    workspace.check_session()?;
-    workspace.refresh();
+    workspace.check_and_refresh()?;
     let entry = workspace
         .credentials
         .iter()
@@ -142,19 +136,6 @@ pub fn get_field(workspace: &mut Workspace, id: &str, field: &str) -> Result<Str
         "password" => Ok(entry.password.clone()),
         _ => Err("Field not found".to_string()),
     }
-}
-
-pub(crate) fn persist(workspace: &Workspace, storage: &VaultStorage) -> Result<(), String> {
-    let key = workspace.session_key.as_ref().ok_or("Vault is locked")?;
-    let vault_data = VaultData::from_workspace(workspace);
-    let json = Zeroizing::new(
-        serde_json::to_string(&vault_data).map_err(|e| format!("Failed to serialize: {}", e))?,
-    );
-    let encrypted = aead::encrypt(key, &json)?;
-
-    let mut vault = storage.read()?;
-    vault.data = encrypted;
-    storage.write(&vault)
 }
 
 #[cfg(test)]
@@ -240,7 +221,7 @@ mod tests {
                 let mut workspace = unlocked_workspace();
                 // Older vaults can contain a website without a scheme.
                 workspace.credentials[0].url = Some(website.into());
-                persist(&workspace, &storage).unwrap();
+                workspace.persist(&storage).unwrap();
                 let mut credential = workspace.credentials[0].clone();
                 credential.title = "Zara1".into();
                 if editing {

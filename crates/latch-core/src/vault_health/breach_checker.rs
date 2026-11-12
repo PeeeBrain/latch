@@ -1,5 +1,9 @@
 use std::future::Future;
 use std::pin::Pin;
+use std::time::Duration;
+
+const REQUEST_TIMEOUT: Duration = Duration::from_secs(10);
+const MAX_RESPONSE_BYTES: usize = 2 * 1024 * 1024;
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct BreachResult {
@@ -14,7 +18,20 @@ pub trait BreachChecker: Send + Sync {
     ) -> Pin<Box<dyn Future<Output = Result<Option<BreachResult>, String>> + Send + '_>>;
 }
 
-pub struct PwnedPasswordsApi;
+pub struct PwnedPasswordsApi {
+    client: reqwest::Client,
+}
+
+impl PwnedPasswordsApi {
+    pub fn new() -> Result<Self, String> {
+        let client = reqwest::Client::builder()
+            .redirect(reqwest::redirect::Policy::none())
+            .timeout(REQUEST_TIMEOUT)
+            .build()
+            .map_err(|_| "Breach service unavailable".to_string())?;
+        Ok(Self { client })
+    }
+}
 
 impl BreachChecker for PwnedPasswordsApi {
     fn check(
@@ -23,14 +40,10 @@ impl BreachChecker for PwnedPasswordsApi {
     ) -> Pin<Box<dyn Future<Output = Result<Option<BreachResult>, String>> + Send + '_>> {
         use sha1::{Digest, Sha1};
         let hash_upper = hex::encode_upper(Sha1::digest(password.as_bytes()));
+        let client = &self.client;
         Box::pin(async move {
             let prefix = &hash_upper[..5];
             let suffix = &hash_upper[5..];
-            let client = reqwest::Client::builder()
-                .redirect(reqwest::redirect::Policy::none())
-                .timeout(std::time::Duration::from_secs(10))
-                .build()
-                .map_err(|_| "Breach service unavailable")?;
             let mut response = client
                 .get(format!("https://api.pwnedpasswords.com/range/{prefix}"))
                 .header("User-Agent", "Latch-Password-Manager")
@@ -46,7 +59,7 @@ impl BreachChecker for PwnedPasswordsApi {
                 .await
                 .map_err(|_| "Cannot read breach response")?
             {
-                if bytes.len() + chunk.len() > 2 * 1024 * 1024 {
+                if bytes.len() + chunk.len() > MAX_RESPONSE_BYTES {
                     return Err("Invalid breach response".into());
                 }
                 bytes.extend_from_slice(&chunk);
@@ -84,7 +97,7 @@ impl BreachChecker for StubBreachChecker {
 }
 
 fn parse_response(body: &str, suffix: &str) -> Result<Option<BreachResult>, String> {
-    if body.is_empty() || body.len() > 2 * 1024 * 1024 {
+    if body.is_empty() || body.len() > MAX_RESPONSE_BYTES {
         return Err("Invalid breach response".into());
     }
     let mut matched = None;

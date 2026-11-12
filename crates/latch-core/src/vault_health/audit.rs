@@ -49,10 +49,16 @@ pub struct VaultHealthReport {
 }
 
 pub fn check_weak_passwords(entries: &[Entry]) -> Vec<WeakPassword> {
+    analyze_passwords(entries).0
+}
+
+fn analyze_passwords(entries: &[Entry]) -> (Vec<WeakPassword>, f64) {
     let mut weak_passwords = Vec::new();
+    let mut total_entropy = 0.0;
 
     for entry in entries {
         let report = crate::password_generator::analyze_password_strength(&entry.password);
+        total_entropy += report.entropy;
 
         if report.score < 3 {
             weak_passwords.push(WeakPassword {
@@ -71,7 +77,7 @@ pub fn check_weak_passwords(entries: &[Entry]) -> Vec<WeakPassword> {
             .partial_cmp(&b.entropy)
             .unwrap_or(std::cmp::Ordering::Equal)
     });
-    weak_passwords
+    (weak_passwords, total_entropy)
 }
 
 pub fn check_reused_passwords(entries: &[Entry]) -> Vec<ReusedPassword> {
@@ -157,7 +163,7 @@ pub async fn check_vault_health(
     entries: &[Entry],
     checker: &dyn BreachChecker,
 ) -> VaultHealthReport {
-    let weak_passwords = check_weak_passwords(entries);
+    let (weak_passwords, total_entropy) = analyze_passwords(entries);
     let reused_passwords = check_reused_passwords(entries);
     let (breached_credentials, breach_unavailable) = check_breach_status(entries, checker).await;
 
@@ -171,11 +177,6 @@ pub async fn check_vault_health(
     );
 
     let strong_passwords = entries.len() - weak_passwords.len();
-
-    let total_entropy: f64 = entries
-        .iter()
-        .map(|e| crate::password_generator::analyze_password_strength(&e.password).entropy)
-        .sum();
 
     let average_entropy = if entries.is_empty() {
         0.0

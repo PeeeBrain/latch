@@ -92,22 +92,55 @@ pub struct Command {
     id: &'static str,
     label: &'static str,
     icon: ui::Icon,
-    /// Keystroke in GPUI syntax; `secondary` is Cmd on macOS and Ctrl elsewhere.
-    keys: Option<&'static str>,
+    shortcut: Option<ShortcutAction>,
     root: bool,
+}
+
+#[derive(Clone, Copy, PartialEq)]
+enum ShortcutAction {
+    Add,
+    Edit,
+    CopyUsername,
+    CopyTotp,
+    Settings,
+    Lock,
+}
+
+impl ShortcutAction {
+    fn chord(self) -> &'static str {
+        match self {
+            Self::Add => "n",
+            Self::Edit => "shift-e",
+            Self::CopyUsername => "shift-c",
+            Self::CopyTotp => "t",
+            Self::Settings => ",",
+            Self::Lock => "l",
+        }
+    }
+
+    fn binding(self, keystroke: &str) -> KeyBinding {
+        match self {
+            Self::Add => KeyBinding::new(keystroke, Add, Some("Latch")),
+            Self::Edit => KeyBinding::new(keystroke, Edit, Some("Latch")),
+            Self::CopyUsername => KeyBinding::new(keystroke, CopyUsername, Some("Latch")),
+            Self::CopyTotp => KeyBinding::new(keystroke, CopyTotp, Some("Latch")),
+            Self::Settings => KeyBinding::new(keystroke, Settings, Some("Latch")),
+            Self::Lock => KeyBinding::new(keystroke, Lock, Some("Latch")),
+        }
+    }
 }
 const fn command(
     id: &'static str,
     label: &'static str,
     icon: ui::Icon,
-    keys: Option<&'static str>,
+    shortcut: Option<ShortcutAction>,
     root: bool,
 ) -> Command {
     Command {
         id,
         label,
         icon,
-        keys,
+        shortcut,
         root,
     }
 }
@@ -116,7 +149,7 @@ const COMMANDS: [Command; 9] = [
         "new",
         "New credential",
         ui::Icon::Plus,
-        Some("secondary-n"),
+        Some(ShortcutAction::Add),
         true,
     ),
     command(
@@ -137,21 +170,21 @@ const COMMANDS: [Command; 9] = [
         "edit",
         "Edit selected credential",
         ui::Icon::Pencil,
-        Some("secondary-shift-e"),
+        Some(ShortcutAction::Edit),
         false,
     ),
     command(
         "username",
         "Copy username",
         ui::Icon::User,
-        Some("secondary-shift-c"),
+        Some(ShortcutAction::CopyUsername),
         false,
     ),
     command(
         "totp",
         "Copy one-time code",
         ui::Icon::Clock,
-        Some("secondary-t"),
+        Some(ShortcutAction::CopyTotp),
         false,
     ),
     command(
@@ -165,14 +198,14 @@ const COMMANDS: [Command; 9] = [
         "settings",
         "Settings",
         ui::Icon::Settings,
-        Some("secondary-,"),
+        Some(ShortcutAction::Settings),
         true,
     ),
     command(
         "lock",
         "Lock vault",
         ui::Icon::Lock,
-        Some("secondary-l"),
+        Some(ShortcutAction::Lock),
         true,
     ),
 ];
@@ -375,22 +408,24 @@ impl Latch {
     }
     pub fn integration_command(
         &mut self,
-        command: &str,
+        command: crate::integration::IntegrationCommand,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         match command {
-            "toggle" if window.is_window_active() => crate::integration::dismiss(window, cx),
-            "show" | "toggle" => {
+            crate::integration::IntegrationCommand::Toggle if window.is_window_active() => {
+                crate::integration::dismiss(window, cx)
+            }
+            crate::integration::IntegrationCommand::Show
+            | crate::integration::IntegrationCommand::Toggle => {
                 crate::integration::present(window, cx);
                 self.focus_first(window, cx);
             }
-            "lock" => self.lock(window, cx),
-            "quit" => {
+            crate::integration::IntegrationCommand::Lock => self.lock(window, cx),
+            crate::integration::IntegrationCommand::Quit => {
                 self.lock(window, cx);
                 cx.quit();
             }
-            _ => {}
         }
     }
     fn auth_fields(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -697,8 +732,7 @@ impl Latch {
         let expired = if let Ok(mut vault) = self.vault.try_lock() {
             vault
                 .with_vault(|_, workspace| {
-                    workspace.check_session()?;
-                    workspace.refresh();
+                    workspace.check_and_refresh()?;
                     Ok(())
                 })
                 .is_err()
@@ -1011,7 +1045,6 @@ impl Latch {
         window.focus(&stops[index], cx);
         cx.notify();
     }
-    /// The stable focus handle for an element id.
     fn stop_handle(&self, id: ElementId, cx: &mut Context<Self>) -> FocusHandle {
         self.stops
             .borrow_mut()
@@ -1486,8 +1519,7 @@ impl Latch {
     fn health(&mut self, cx: &mut Context<Self>) {
         self.work(cx, |vault| {
             vault.with_vault(|_, workspace| {
-                workspace.check_session()?;
-                workspace.refresh();
+                workspace.check_and_refresh()?;
                 let mut issues: Vec<_> =
                     latch_core::vault_health::audit::check_weak_passwords(&workspace.credentials)
                         .into_iter()
@@ -1514,13 +1546,12 @@ impl Latch {
         let epoch = self.epoch.load(Ordering::SeqCst);
         let task = cx.background_executor().spawn(async move {
             let (entries,mut cancel) = vault.lock().map_err(|_|"Vault unavailable")?.with_vault(|_,workspace| {
-                workspace.check_session()?;
-                workspace.refresh();
+                workspace.check_and_refresh()?;
                 Ok((workspace.credentials.clone(),workspace.alias_cancel_receiver()))
             })?;
             let runtime = tokio::runtime::Builder::new_current_thread().enable_all().build().map_err(|_|"Network runtime unavailable")?;
             runtime.block_on(async move {
-                let checker = latch_core::vault_health::breach_checker::PwnedPasswordsApi;
+                let checker = latch_core::vault_health::breach_checker::PwnedPasswordsApi::new()?;
                 tokio::select! {
                     report = latch_core::vault_health::audit::check_breach_status(&entries,&checker) => Ok(report),
                     _ = cancel.changed() => Err("Vault locked; breach check canceled".to_string()),
@@ -1573,7 +1604,7 @@ impl Latch {
         let epoch = self.epoch.load(Ordering::SeqCst);
         let task = cx.background_executor().spawn(async move {
             let (config,mut cancel) = vault.lock().map_err(|_|"Vault unavailable")?.with_vault(|_,workspace|{
-                workspace.check_session()?;workspace.refresh();
+                workspace.check_and_refresh()?;
                 let provider=workspace.default_provider_id.as_deref().or_else(||workspace.alias_configs.first().map(|config|config.provider_id.as_str())).ok_or("Configure an alias provider in Settings first")?;
                 let config=workspace.alias_configs.iter().find(|config|config.provider_id==provider).cloned().ok_or("Default alias provider is unavailable")?;
                 Ok((config,workspace.alias_cancel_receiver()))
@@ -1725,7 +1756,7 @@ impl Latch {
     }
 }
 pub fn init(cx: &mut App) {
-    cx.bind_keys([
+    let mut bindings = vec![
         KeyBinding::new("escape", Back, Some("Latch")),
         KeyBinding::new("ctrl-alt-r", ResetAppearance, Some("Latch")),
         KeyBinding::new("cmd-alt-r", ResetAppearance, Some("Latch")),
@@ -1738,23 +1769,17 @@ pub fn init(cx: &mut App) {
         KeyBinding::new("left", Decrease, Some("Latch")),
         KeyBinding::new("right", Increase, Some("Latch")),
         KeyBinding::new("shift-tab", TabPrevious, Some("Latch")),
-        KeyBinding::new("ctrl-n", Add, Some("Latch")),
-        KeyBinding::new("cmd-n", Add, Some("Latch")),
-        KeyBinding::new("ctrl-shift-e", Edit, Some("Latch")),
-        KeyBinding::new("cmd-shift-e", Edit, Some("Latch")),
-        KeyBinding::new("ctrl-l", Lock, Some("Latch")),
-        KeyBinding::new("cmd-l", Lock, Some("Latch")),
         KeyBinding::new("ctrl-k", Actions, Some("Latch")),
         KeyBinding::new("cmd-k", Actions, Some("Latch")),
-        KeyBinding::new("ctrl-,", Settings, Some("Latch")),
-        KeyBinding::new("cmd-,", Settings, Some("Latch")),
-        KeyBinding::new("ctrl-shift-c", CopyUsername, Some("Latch")),
-        KeyBinding::new("cmd-shift-c", CopyUsername, Some("Latch")),
-        KeyBinding::new("ctrl-t", CopyTotp, Some("Latch")),
-        KeyBinding::new("cmd-t", CopyTotp, Some("Latch")),
         KeyBinding::new("ctrl-q", Quit, Some("Latch")),
         KeyBinding::new("cmd-q", Quit, Some("Latch")),
-    ]);
+    ];
+    for shortcut in COMMANDS.iter().filter_map(|command| command.shortcut) {
+        let chord = shortcut.chord();
+        bindings.push(shortcut.binding(&format!("ctrl-{chord}")));
+        bindings.push(shortcut.binding(&format!("cmd-{chord}")));
+    }
+    cx.bind_keys(bindings);
 }
 
 #[cfg(test)]

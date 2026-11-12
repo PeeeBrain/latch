@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- Breach checks reuse a network connection across Credentials, and full health reports analyze each password's strength once.
+
 ## [0.3.4] - 2026-10-24
 
 ### Changed

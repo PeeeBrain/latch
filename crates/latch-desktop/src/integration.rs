@@ -27,6 +27,14 @@ pub struct Integration {
 }
 impl Global for Integration {}
 
+#[derive(Clone, Copy)]
+pub enum IntegrationCommand {
+    Toggle,
+    Show,
+    Lock,
+    Quit,
+}
+
 fn tray() -> Result<TrayIcon, String> {
     let menu = Menu::new();
     let show = MenuItem::with_id("show", "Open Latch", true, None);
@@ -44,6 +52,15 @@ fn tray() -> Result<TrayIcon, String> {
         .with_icon(Icon::from_rgba(image.into_raw(), 32, 32).map_err(|e| e.to_string())?)
         .build()
         .map_err(|e| e.to_string())
+}
+
+fn menu_command(id: &str) -> Option<IntegrationCommand> {
+    match id {
+        "show" => Some(IntegrationCommand::Show),
+        "lock" => Some(IntegrationCommand::Lock),
+        "quit" => Some(IntegrationCommand::Quit),
+        _ => None,
+    }
 }
 
 pub fn start(window: AnyWindowHandle, view: Entity<crate::app::Latch>, cx: &mut App) {
@@ -105,18 +122,18 @@ pub fn start(window: AnyWindowHandle, view: Entity<crate::app::Latch>, cx: &mut 
             let mut commands = Vec::new();
             while let Ok(event) = GlobalHotKeyEvent::receiver().try_recv() {
                 if event.state == HotKeyState::Pressed {
-                    commands.push("toggle".to_string());
+                    commands.push(IntegrationCommand::Toggle);
                 }
             }
             while let Ok(event) = MenuEvent::receiver().try_recv() {
-                commands.push(event.id.0);
+                if let Some(command) = menu_command(&event.id.0) {
+                    commands.push(command);
+                }
             }
             for command in commands {
                 if window
                     .update(cx, |_, window, cx| {
-                        view.update(cx, |this, cx| {
-                            this.integration_command(&command, window, cx)
-                        });
+                        view.update(cx, |this, cx| this.integration_command(command, window, cx));
                     })
                     .is_err()
                 {

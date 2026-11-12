@@ -1,7 +1,8 @@
-use super::{AliasConfig, Entry, SESSION_TIMEOUT_SECS};
+use super::{storage::VaultStorage, AliasConfig, Entry, VaultData, SESSION_TIMEOUT_SECS};
+use crate::crypto::aead;
 use std::time::{Duration, SystemTime};
 use tokio::sync::watch;
-use zeroize::Zeroize;
+use zeroize::{Zeroize, Zeroizing};
 
 pub struct Workspace {
     pub credentials: Vec<Entry>,
@@ -43,6 +44,12 @@ impl Workspace {
         Ok(())
     }
 
+    pub fn check_and_refresh(&mut self) -> Result<(), String> {
+        self.check_session()?;
+        self.refresh();
+        Ok(())
+    }
+
     pub fn session_id(&self) -> Option<u64> {
         self.is_unlocked().then_some(self.session_generation)
     }
@@ -66,6 +73,20 @@ impl Workspace {
 
     pub fn refresh(&mut self) {
         self.session_start = Some(SystemTime::now());
+    }
+
+    pub(crate) fn persist(&self, storage: &VaultStorage) -> Result<(), String> {
+        let key = self.session_key.as_ref().ok_or("Vault is locked")?;
+        let vault_data = VaultData::from_workspace(self);
+        let json = Zeroizing::new(
+            serde_json::to_string(&vault_data)
+                .map_err(|e| format!("Failed to serialize: {}", e))?,
+        );
+        let encrypted = aead::encrypt(key, &json)?;
+
+        let mut vault = storage.read()?;
+        vault.data = encrypted;
+        storage.write(&vault)
     }
 
     pub fn lock(&mut self) {
@@ -172,6 +193,30 @@ mod tests {
         assert_eq!(
             workspace.expire_session(generation, before_activity),
             Some(Duration::ZERO)
+        );
+        assert!(!workspace.is_unlocked());
+    }
+
+    #[test]
+    fn check_and_refresh_updates_session_activity() {
+        let mut locked = Workspace::new();
+        assert_eq!(locked.check_and_refresh().unwrap_err(), "Vault is locked");
+        assert!(!locked.is_unlocked());
+
+        let mut workspace = Workspace::new();
+        workspace.start([1; 32]);
+        let previous = SystemTime::now() - Duration::from_secs(1);
+        workspace.session_start = Some(previous);
+
+        workspace.check_and_refresh().unwrap();
+
+        assert!(workspace.session_start.unwrap() > previous);
+
+        workspace.session_start =
+            Some(SystemTime::now() - Duration::from_secs(SESSION_TIMEOUT_SECS + 1));
+        assert_eq!(
+            workspace.check_and_refresh().unwrap_err(),
+            "Session expired"
         );
         assert!(!workspace.is_unlocked());
     }

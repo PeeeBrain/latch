@@ -97,8 +97,7 @@ pub fn save_config(
     api_token: &str,
     description: Option<&str>,
 ) -> Result<(), String> {
-    workspace.check_session()?;
-    workspace.refresh();
+    workspace.check_and_refresh()?;
     Provider::from_id(provider_id)?;
     if api_token.trim().is_empty() || api_token.len() > 4096 {
         return Err("Alias API token is required".to_string());
@@ -127,7 +126,7 @@ pub fn save_config(
         }),
     }
 
-    if let Err(error) = crate::vault::entries::persist(workspace, storage) {
+    if let Err(error) = workspace.persist(storage) {
         workspace.alias_configs = previous;
         return Err(error);
     }
@@ -142,8 +141,7 @@ pub struct AliasProviderInfo {
 
 /// List configured providers for display. The API token is never included.
 pub fn list_configs(workspace: &mut Workspace) -> Result<Vec<AliasProviderInfo>, String> {
-    workspace.check_session()?;
-    workspace.refresh();
+    workspace.check_and_refresh()?;
     Ok(workspace
         .alias_configs
         .iter()
@@ -159,8 +157,7 @@ pub fn delete_config(
     storage: &VaultStorage,
     provider_id: &str,
 ) -> Result<(), String> {
-    workspace.check_session()?;
-    workspace.refresh();
+    workspace.check_and_refresh()?;
     let previous = workspace.alias_configs.clone();
     let previous_default = workspace.default_provider_id.clone();
     let len_before = workspace.alias_configs.len();
@@ -173,7 +170,7 @@ pub fn delete_config(
     if workspace.default_provider_id.as_deref() == Some(provider_id) {
         workspace.default_provider_id = None;
     }
-    if let Err(error) = crate::vault::entries::persist(workspace, storage) {
+    if let Err(error) = workspace.persist(storage) {
         workspace.alias_configs = previous;
         workspace.default_provider_id = previous_default;
         return Err(error);
@@ -186,8 +183,7 @@ pub fn set_default_config(
     storage: &VaultStorage,
     provider_id: &str,
 ) -> Result<(), String> {
-    workspace.check_session()?;
-    workspace.refresh();
+    workspace.check_and_refresh()?;
     if !workspace
         .alias_configs
         .iter()
@@ -198,7 +194,7 @@ pub fn set_default_config(
     let previous = workspace
         .default_provider_id
         .replace(provider_id.to_string());
-    if let Err(error) = crate::vault::entries::persist(workspace, storage) {
+    if let Err(error) = workspace.persist(storage) {
         workspace.default_provider_id = previous;
         return Err(error);
     }

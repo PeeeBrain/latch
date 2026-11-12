@@ -185,23 +185,10 @@ pub struct Appearance {
 }
 impl Appearance {
     pub fn parse(text: &str, source: Source) -> Result<Self, String> {
-        if text.len() > 256 * 1024 {
-            return Err("Settings file exceeds 256 KiB".into());
-        }
-        bound_depth(text)?;
-        let value: Value = jsonc_parser::parse_to_serde_value(
-            text,
-            &jsonc_parser::ParseOptions {
-                allow_comments: true,
-                allow_trailing_commas: true,
-                allow_loose_object_property_names: false,
-                allow_missing_commas: false,
-                allow_single_quoted_strings: false,
-                allow_hexadecimal_numbers: false,
-                allow_unary_plus_numbers: false,
-            },
-        )
-        .map_err(|_| "Invalid JSONC settings".to_string())?;
+        Self::from_value(parse_jsonc(text)?, source)
+    }
+
+    fn from_value(value: Value, source: Source) -> Result<Self, String> {
         let object = value.as_object().ok_or("Settings must be a JSON object")?;
         let converted = theme_file_as_settings(object, source);
         let object = converted.as_ref().unwrap_or(object);
@@ -380,16 +367,6 @@ impl Appearance {
         let bytes =
             serde_json::to_vec_pretty(&self.document).map_err(|_| "Cannot encode appearance")?;
         atomic_write(&directory.join("settings.json"), &bytes)?;
-        // The managed file contains only one editor's existing schema, so recovery can
-        // infer its format if writing this non-secret metadata is interrupted.
-        atomic_write(
-            &directory.join("appearance-source"),
-            if self.source == Source::VsCode {
-                b"vscode"
-            } else {
-                b"zed"
-            },
-        )?;
         atomic_write(&directory.join("settings.last-valid.json"), &bytes)
     }
     pub fn load(directory: &Path) -> Result<Option<Self>, String> {
@@ -397,15 +374,17 @@ impl Appearance {
         if !path.exists() {
             return Ok(None);
         }
-        let text = read(&path)?;
-        let source = infer(&text)?;
-        Self::parse(&text, source).map(Some)
+        let value = parse_jsonc(&read(&path)?)?;
+        let source = infer(&value)?;
+        Self::from_value(value, source).map(Some)
     }
 }
-fn infer(text: &str) -> Result<Source, String> {
-    // Infer only the appearance-only managed file, never a user's imported document.
+fn parse_jsonc(text: &str) -> Result<Value, String> {
+    if text.len() > 256 * 1024 {
+        return Err("Settings file exceeds 256 KiB".into());
+    }
     bound_depth(text)?;
-    let value: Value = jsonc_parser::parse_to_serde_value(
+    jsonc_parser::parse_to_serde_value(
         text,
         &jsonc_parser::ParseOptions {
             allow_comments: true,
@@ -417,7 +396,11 @@ fn infer(text: &str) -> Result<Source, String> {
             allow_unary_plus_numbers: false,
         },
     )
-    .map_err(|_| "Invalid JSONC settings".to_string())?;
+    .map_err(|_| "Invalid JSONC settings".to_string())
+}
+
+fn infer(value: &Value) -> Result<Source, String> {
+    // Infer only the appearance-only managed file, never a user's imported document.
     if value.get("workbench.colorCustomizations").is_some() {
         Ok(Source::VsCode)
     } else if value.get("theme_overrides").is_some()
