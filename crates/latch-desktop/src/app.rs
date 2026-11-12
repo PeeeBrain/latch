@@ -417,12 +417,12 @@ impl Latch {
         cx: &mut Context<Self>,
     ) {
         match command {
-            crate::integration::IntegrationCommand::Toggle if window.is_window_active() => {
+            crate::integration::IntegrationCommand::Toggle(_) if window.is_window_active() => {
                 crate::integration::dismiss(window, cx)
             }
-            crate::integration::IntegrationCommand::Show
-            | crate::integration::IntegrationCommand::Toggle => {
-                crate::integration::present(window, cx);
+            crate::integration::IntegrationCommand::Show(token)
+            | crate::integration::IntegrationCommand::Toggle(token) => {
+                crate::integration::present(window, token, cx);
                 self.focus_first(window, cx);
             }
             crate::integration::IntegrationCommand::Lock => self.lock(window, cx),

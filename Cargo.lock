@@ -4340,7 +4340,7 @@ dependencies = [
 
 [[package]]
 name = "latch-core"
-version = "0.3.4"
+version = "0.3.5"
 dependencies = [
  "aes-gcm",
  "argon2",
@@ -4367,8 +4367,9 @@ dependencies = [
 
 [[package]]
 name = "latch-desktop"
-version = "0.3.4"
+version = "0.3.5"
 dependencies = [
+ "ashpd",
  "cargo-packager-updater",
  "embed-resource",
  "global-hotkey",
@@ -4393,6 +4394,9 @@ dependencies = [
  "unicode-segmentation",
  "url",
  "uuid",
+ "wayland-backend",
+ "wayland-client",
+ "wayland-protocols",
  "windows 0.61.3",
  "zeroize",
 ]
