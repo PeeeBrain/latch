@@ -335,10 +335,96 @@ pub fn present(window: &mut Window, token: Option<String>, cx: &mut App) {
         show(hwnd);
     }
     match token {
-        Some(token) => window.activate_window_with_token(token),
-        None => window.activate_window(),
+        #[cfg(target_os = "linux")]
+        Some(token) if wayland::activate(window, &token) => {}
+        _ => window.activate_window(),
     }
     cx.activate(true);
+}
+
+/// Raises the window with an xdg-activation token another process handed over
+/// (the shortcut portal). GPUI only requests its own token, which compositors
+/// refuse, so Latch makes the call itself on GPUI's libwayland connection.
+#[cfg(target_os = "linux")]
+mod wayland {
+    use gpui_kit::Window;
+    use raw_window_handle::{HasDisplayHandle, HasWindowHandle, RawDisplayHandle, RawWindowHandle};
+    use std::cell::OnceCell;
+    use wayland_backend::client::{Backend, ObjectId};
+    use wayland_client::globals::{GlobalListContents, registry_queue_init};
+    use wayland_client::protocol::{wl_registry::WlRegistry, wl_surface::WlSurface};
+    use wayland_client::{Connection, Dispatch, EventQueue, Proxy, QueueHandle};
+    use wayland_protocols::xdg::activation::v1::client::xdg_activation_v1::XdgActivationV1;
+
+    struct Ignore;
+    impl Dispatch<WlRegistry, GlobalListContents> for Ignore {
+        fn event(
+            _: &mut Self,
+            _: &WlRegistry,
+            _: <WlRegistry as Proxy>::Event,
+            _: &GlobalListContents,
+            _: &Connection,
+            _: &QueueHandle<Self>,
+        ) {
+        }
+    }
+    wayland_client::delegate_noop!(Ignore: ignore XdgActivationV1);
+
+    struct Activation {
+        connection: Connection,
+        global: XdgActivationV1,
+        // Keeps the registry and global attached to a live queue. Never
+        // dispatched: neither needs events.
+        _queue: EventQueue<Ignore>,
+    }
+
+    thread_local! {
+        // Bound once, on the UI thread that owns the window.
+        static ACTIVATION: OnceCell<Option<Activation>> = const { OnceCell::new() };
+    }
+
+    fn bind(display: *mut std::ffi::c_void) -> Option<Activation> {
+        // SAFETY: GPUI's libwayland display lives as long as the app, and a
+        // foreign backend never closes it.
+        let backend = unsafe { Backend::from_foreign_display(display.cast()) };
+        let connection = Connection::from_backend(backend);
+        let (globals, queue) = registry_queue_init::<Ignore>(&connection).ok()?;
+        let global = globals.bind(&queue.handle(), 1..=1, ()).ok()?;
+        Some(Activation {
+            connection,
+            global,
+            _queue: queue,
+        })
+    }
+
+    /// False off Wayland or when the compositor lacks xdg-activation.
+    pub fn activate(window: &Window, token: &str) -> bool {
+        // GPUI's own `window_handle` method shadows the raw-window-handle one.
+        let surface = HasWindowHandle::window_handle(window);
+        let (Ok(display), Ok(surface)) = (window.display_handle(), surface) else {
+            return false;
+        };
+        let (RawDisplayHandle::Wayland(display), RawWindowHandle::Wayland(surface)) =
+            (display.as_raw(), surface.as_raw())
+        else {
+            return false;
+        };
+        ACTIVATION.with(|cell| {
+            let Some(activation) = cell.get_or_init(|| bind(display.display.as_ptr())) else {
+                return false;
+            };
+            // SAFETY: the surface is GPUI's live window on that same display.
+            let id = unsafe {
+                ObjectId::from_ptr(WlSurface::interface(), surface.surface.as_ptr().cast())
+            };
+            let Ok(surface) = id.and_then(|id| WlSurface::from_id(&activation.connection, id))
+            else {
+                return false;
+            };
+            activation.global.activate(token.to_owned(), &surface);
+            activation.connection.flush().is_ok()
+        })
+    }
 }
 
 /// Brings an already running Latch forward when a second launch loses the

@@ -4394,6 +4394,9 @@ dependencies = [
  "unicode-segmentation",
  "url",
  "uuid",
+ "wayland-backend",
+ "wayland-client",
+ "wayland-protocols",
  "windows 0.61.3",
  "zeroize",
 ]
