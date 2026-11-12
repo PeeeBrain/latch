@@ -46,6 +46,8 @@ semver = "1"
 tray-icon = { version = "0.24", default-features = false }
 
 [target.'cfg(target_os = "linux")'.dependencies]
+# Same version GPUI already pulls in; adds the Wayland GlobalShortcuts portal.
+ashpd = { version = "0.13", default-features = false, features = ["async-io", "global_shortcuts"] }
 gtk = "0.18"
 # Same version and features GPUI already pulls in, so no new crates. Re-exports zbus for polkit.
 oo7 = { version = "0.6", default-features = false, features = ["async-std", "native_crypto"] }

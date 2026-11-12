@@ -4369,6 +4369,7 @@ dependencies = [
 name = "latch-desktop"
 version = "0.3.4"
 dependencies = [
+ "ashpd",
  "cargo-packager-updater",
  "embed-resource",
  "global-hotkey",

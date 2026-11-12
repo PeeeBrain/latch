@@ -46,7 +46,7 @@ Latch opens one command window. Create or unlock a vault, then type to filter cr
 - Use Ctrl+N to add a credential, Ctrl+Shift+E to edit, Ctrl+L to lock, and Ctrl+, to open settings. Use Cmd for these shortcuts on macOS.
 - Save a new or edited credential with the Save credential button or Ctrl+S, or Cmd+S on macOS. Enter saves while a text field is focused.
 - Press Escape to go back and Tab/Shift+Tab to move between controls.
-- Ctrl+Space shows or hides Latch on all platforms when global shortcut registration succeeds.
+- Ctrl+Space shows or hides Latch on all platforms when global shortcut registration succeeds. On Linux, Latch asks the desktop through the XDG GlobalShortcuts portal (the only way on Wayland), and the desktop may ask you to confirm or pick another key; Settings shows the key it bound.
 
 Native access supports a master password and device-key access through Windows Hello, macOS Keychain, or on Linux a polkit fingerprint/login-password prompt with the key in the login keyring. The app also provides timed password reveal, TOTP codes, configurable password generation, SimpleLogin/DuckDuckGo aliases, local password health checks, optional HIBP breach checks, and password/device-key rotation.
 
@@ -131,7 +131,7 @@ The `legacy-oauth` feature exists only for historical vault compatibility tests.
 
 - An old interface usually means an old executable is running. Close it and restart with `cargo run -p latch-desktop --locked`.
 - If another process holds the vault lock, close the other Latch host or choose a separate development vault.
-- If Ctrl+Space is unavailable, another application or the desktop environment may own it. Open Latch from the application launcher.
+- If Ctrl+Space is unavailable, another application or the desktop environment may own it. Open Latch from the application launcher. On Linux, change the key in your desktop's shortcut settings, where Latch appears once it has asked for one. Wayland desktops without the GlobalShortcuts portal cannot give Latch a global shortcut.
 - A Google vault requires migration through the previous app before upgrading. A damaged or unsupported vault is preserved rather than replaced with an empty one.
 
 ## License

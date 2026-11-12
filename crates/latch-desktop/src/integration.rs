@@ -27,12 +27,88 @@ pub struct Integration {
 }
 impl Global for Integration {}
 
-#[derive(Clone, Copy)]
+/// `Toggle` and `Show` carry the activation token a Wayland desktop hands over
+/// with a shortcut press; without one the compositor will not raise Latch.
 pub enum IntegrationCommand {
-    Toggle,
-    Show,
+    Toggle(Option<String>),
+    Show(Option<String>),
     Lock,
     Quit,
+}
+
+/// What the GlobalShortcuts portal task reports back to the command loop.
+#[cfg(target_os = "linux")]
+enum PortalEvent {
+    Bound(String),
+    Failed(String),
+    Activated(Option<String>),
+}
+
+/// Binds Ctrl+Space through the XDG GlobalShortcuts portal, the only way to
+/// get a global shortcut on Wayland, and forwards presses until the session ends.
+#[cfg(target_os = "linux")]
+async fn portal_shortcut(events: std::sync::mpsc::Sender<PortalEvent>) -> ashpd::Result<()> {
+    use ashpd::desktop::global_shortcuts::{GlobalShortcuts, NewShortcut};
+    use ashpd::zbus::export::futures_core::Stream;
+    // Registering the host app id must be the first portal call on a
+    // connection, and GPUI has already used its own, so this one is fresh.
+    let connection = ashpd::zbus::Connection::session().await?;
+    ashpd::register_host_app_with_connection(
+        connection.clone(),
+        "com.latch.passwordmanager".try_into()?,
+    )
+    .await?;
+    let portal = GlobalShortcuts::with_connection(connection).await?;
+    // The portal ends the session when this connection closes, so the shortcut
+    // stays bound while `portal` lives, which is as long as the loop below.
+    let session = portal.create_session(Default::default()).await?;
+    let shortcut = NewShortcut::new("toggle", "Show or hide Latch").preferred_trigger("CTRL+space");
+    let bound = portal
+        .bind_shortcuts(&session, &[shortcut], None, Default::default())
+        .await?
+        .response()?;
+    let mut activated = std::pin::pin!(portal.receive_activated().await?);
+    let trigger = bound
+        .shortcuts()
+        .iter()
+        .find(|shortcut| shortcut.id() == "toggle")
+        .map(|shortcut| shortcut.trigger_description().to_owned())
+        .unwrap_or_default();
+    let _ = events.send(PortalEvent::Bound(trigger));
+    while let Some(press) = std::future::poll_fn(|cx| activated.as_mut().poll_next(cx)).await {
+        if press.shortcut_id() != "toggle" {
+            continue;
+        }
+        let token = press
+            .options()
+            .get("activation_token")
+            .and_then(|token| <&str>::try_from(&**token).ok())
+            .map(str::to_owned);
+        if events.send(PortalEvent::Activated(token)).is_err() {
+            break;
+        }
+    }
+    Ok(())
+}
+
+/// The X11-era path: works on Windows, macOS, and X11, and nowhere else.
+fn register_hotkey() -> (Option<GlobalHotKeyManager>, String) {
+    // Same quick-access chord as the previous app: Ctrl+Space on every platform.
+    let hotkey = GlobalHotKeyManager::new().and_then(|manager| {
+        manager.register(HotKey::new(Some(Modifiers::CONTROL), Code::Space))?;
+        Ok(manager)
+    });
+    match hotkey {
+        Ok(manager) => (
+            Some(manager),
+            "Quick access: Ctrl+Space shows or hides Latch.".into(),
+        ),
+        Err(error) => (None, shortcut_unavailable(error)),
+    }
+}
+
+fn shortcut_unavailable(error: impl std::fmt::Display) -> String {
+    format!("Global shortcut unavailable: {error}. Open Latch from your application launcher.")
 }
 
 fn tray() -> Result<TrayIcon, String> {
@@ -56,7 +132,7 @@ fn tray() -> Result<TrayIcon, String> {
 
 fn menu_command(id: &str) -> Option<IntegrationCommand> {
     match id {
-        "show" => Some(IntegrationCommand::Show),
+        "show" => Some(IntegrationCommand::Show(None)),
         "lock" => Some(IntegrationCommand::Lock),
         "quit" => Some(IntegrationCommand::Quit),
         _ => None,
@@ -64,16 +140,25 @@ fn menu_command(id: &str) -> Option<IntegrationCommand> {
 }
 
 pub fn start(window: AnyWindowHandle, view: Entity<crate::app::Latch>, cx: &mut App) {
-    // Same quick-access chord as the previous app: Ctrl+Space on every platform.
-    let hotkey = GlobalHotKeyManager::new().and_then(|manager| {
-        manager.register(HotKey::new(Some(Modifiers::CONTROL), Code::Space))?;
-        Ok(manager)
-    });
-    let status = match &hotkey {
-        Ok(_) => "Quick access: Ctrl+Space shows or hides Latch.".into(),
-        Err(error) => format!(
-            "Global shortcut unavailable: {error}. Open Latch from your application launcher."
-        ),
+    #[cfg(not(target_os = "linux"))]
+    let (hotkey, status) = register_hotkey();
+    // Linux tries the portal first (Wayland and modern X11 desktops). If it
+    // fails, an X11 session falls back to the X11 grab.
+    #[cfg(target_os = "linux")]
+    let (hotkey, status, portal) = {
+        let (events, portal) = std::sync::mpsc::channel();
+        cx.background_executor()
+            .spawn(async move {
+                if let Err(error) = portal_shortcut(events.clone()).await {
+                    let _ = events.send(PortalEvent::Failed(error.to_string()));
+                }
+            })
+            .detach();
+        (
+            None,
+            "Quick access: waiting for your desktop to confirm Ctrl+Space.".to_string(),
+            portal,
+        )
     };
     let available = Arc::new(AtomicBool::new(false));
     #[cfg(not(target_os = "linux"))]
@@ -109,7 +194,7 @@ pub fn start(window: AnyWindowHandle, view: Entity<crate::app::Latch>, cx: &mut 
         None
     };
     cx.set_global(Integration {
-        _hotkey: hotkey.ok(),
+        _hotkey: hotkey,
         _tray: icon,
         tray_available: available,
         status,
@@ -122,7 +207,43 @@ pub fn start(window: AnyWindowHandle, view: Entity<crate::app::Latch>, cx: &mut 
             let mut commands = Vec::new();
             while let Ok(event) = GlobalHotKeyEvent::receiver().try_recv() {
                 if event.state == HotKeyState::Pressed {
-                    commands.push(IntegrationCommand::Toggle);
+                    commands.push(IntegrationCommand::Toggle(None));
+                }
+            }
+            #[cfg(target_os = "linux")]
+            while let Ok(event) = portal.try_recv() {
+                match event {
+                    PortalEvent::Activated(token) => {
+                        commands.push(IntegrationCommand::Toggle(token));
+                    }
+                    PortalEvent::Bound(trigger) => {
+                        let status = if trigger.is_empty() {
+                            "Quick access: assign a key to Latch in your desktop's shortcut settings."
+                                .into()
+                        } else {
+                            format!("Quick access: {trigger} shows or hides Latch.")
+                        };
+                        cx.update_global(|integration: &mut Integration, _| {
+                            integration.status = status;
+                        });
+                    }
+                    PortalEvent::Failed(error) => {
+                        eprintln!("Global shortcuts portal unavailable: {error}");
+                        // GPUI picks Wayland the same way. An X11 grab there only
+                        // reaches XWayland windows, so it would claim a shortcut
+                        // that never fires.
+                        let wayland = std::env::var_os("WAYLAND_DISPLAY")
+                            .is_some_and(|display| !display.is_empty());
+                        let (hotkey, status) = if wayland {
+                            (None, shortcut_unavailable(error))
+                        } else {
+                            register_hotkey()
+                        };
+                        cx.update_global(|integration: &mut Integration, _| {
+                            integration._hotkey = hotkey;
+                            integration.status = status;
+                        });
+                    }
                 }
             }
             while let Ok(event) = MenuEvent::receiver().try_recv() {
@@ -186,13 +307,17 @@ pub fn hide_if_minimized(window: &Window, cx: &App) {
     }
 }
 
-/// Shows and focuses the window, undoing `dismiss` or a minimize.
-pub fn present(window: &mut Window, cx: &mut App) {
+/// Shows and focuses the window, undoing `dismiss` or a minimize. Wayland only
+/// raises it with an activation `token` from the shortcut press.
+pub fn present(window: &mut Window, token: Option<String>, cx: &mut App) {
     #[cfg(target_os = "windows")]
     if let Some(hwnd) = hwnd(window) {
         show(hwnd);
     }
-    window.activate_window();
+    match token {
+        Some(token) => window.activate_window_with_token(token),
+        None => window.activate_window(),
+    }
     cx.activate(true);
 }
 
