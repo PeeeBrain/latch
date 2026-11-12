@@ -103,12 +103,13 @@ fn register_hotkey() -> (Option<GlobalHotKeyManager>, String) {
             Some(manager),
             "Quick access: Ctrl+Space shows or hides Latch.".into(),
         ),
-        Err(error) => (None, shortcut_unavailable(error)),
+        Err(error) => (
+            None,
+            format!(
+                "Global shortcut unavailable: {error}. Open Latch from your application launcher."
+            ),
+        ),
     }
-}
-
-fn shortcut_unavailable(error: impl std::fmt::Display) -> String {
-    format!("Global shortcut unavailable: {error}. Open Latch from your application launcher.")
 }
 
 fn tray() -> Result<TrayIcon, String> {
@@ -235,7 +236,12 @@ pub fn start(window: AnyWindowHandle, view: Entity<crate::app::Latch>, cx: &mut 
                         let wayland = std::env::var_os("WAYLAND_DISPLAY")
                             .is_some_and(|display| !display.is_empty());
                         let (hotkey, status) = if wayland {
-                            (None, shortcut_unavailable(error))
+                            // The raw portal error went to stderr above.
+                            (
+                                None,
+                                "Global shortcut unavailable: your desktop did not grant one. Open Latch from your application launcher."
+                                    .into(),
+                            )
                         } else {
                             register_hotkey()
                         };
