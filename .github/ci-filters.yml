@@ -31,5 +31,4 @@ tooling:
 workflows:
   - '.github/workflows/**'
   - '.github/actions/**'
-  - '.github/actionlint.yaml'
   - '.github/ci-filters.yml'
