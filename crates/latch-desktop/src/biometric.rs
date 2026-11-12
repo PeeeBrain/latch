@@ -341,11 +341,20 @@ mod platform {
         Ok(Some(Zeroizing::new(value.to_owned())))
     }
 
+    /// Every keyring access goes through here, so the key is never read without
+    /// polkit approval. Futures are lazy: `keyring` doesn't start until `gate` passes.
+    async fn gated<T>(
+        gate: impl Future<Output = Result<(), String>>,
+        keyring: impl Future<Output = Result<T, String>>,
+    ) -> Result<T, String> {
+        gate.await?;
+        keyring.await
+    }
+
     // zbus::block_on is the executor zbus' own blocking API uses. Callers already
     // run on a background thread, like the blocking Windows and macOS calls.
     pub fn create_or_retrieve() -> Result<Zeroizing<String>, String> {
-        zbus::block_on(async {
-            authorize().await?;
+        zbus::block_on(gated(authorize(), async {
             let keyring = keyring().await?;
             // Never replace a key that could still protect an existing vault.
             if let Some(existing) = stored(&keyring).await? {
@@ -364,16 +373,35 @@ mod platform {
                 return Err("Stored device key verification failed".into());
             }
             Ok(verified)
-        })
+        }))
     }
 
     pub fn retrieve() -> Result<Zeroizing<String>, String> {
-        zbus::block_on(async {
-            authorize().await?;
+        zbus::block_on(gated(authorize(), async {
             stored(&keyring().await?)
                 .await?
                 .ok_or_else(|| "no device key is stored".into())
-        })
+        }))
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+        use std::cell::Cell;
+
+        #[test]
+        fn denied_authorization_never_touches_the_keyring() {
+            let touched = Cell::new(false);
+            let result = zbus::block_on(gated(
+                async { Err::<(), _>("authentication was cancelled".to_string()) },
+                async {
+                    touched.set(true);
+                    Ok(Zeroizing::new("key".to_string()))
+                },
+            ));
+            assert_eq!(result.unwrap_err(), "authentication was cancelled");
+            assert!(!touched.get());
+        }
     }
 }
 
