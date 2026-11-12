@@ -208,7 +208,6 @@ impl Latch {
             )
     }
 
-    /// Icon row with a neutral tile.
     fn icon_row(
         &self,
         id: impl Into<ElementId>,
@@ -620,7 +619,10 @@ impl Latch {
                             .text_size(px(ui::TEXT_SM))
                             .text_color(p.color(Color::Muted))
                             .child("Add your first one with")
-                            .children(kbd(p, "secondary-n")),
+                            .children(kbd(
+                                p,
+                                &format!("secondary-{}", ShortcutAction::Add.chord()),
+                            )),
                     ),
             );
         } else if shown == 0 && commands.is_empty() {
@@ -678,7 +680,11 @@ impl Latch {
                 )
                 .tab_stop(false)
                 .aria_selected(index == self.selected)
-                .children(command.keys.and_then(|keys| kbd(p, keys)));
+                .children(
+                    command
+                        .shortcut
+                        .and_then(|action| kbd(p, &format!("secondary-{}", action.chord()))),
+                );
             body = body.child(
                 div()
                     .flex_shrink_0()
@@ -915,7 +921,10 @@ impl Latch {
                     p,
                     format!("{}s", vault::totp::remaining_seconds(time)),
                 ))
-                .children(kbd(p, "secondary-t")),
+                .children(kbd(
+                    p,
+                    &format!("secondary-{}", ShortcutAction::CopyTotp.chord()),
+                )),
             );
         }
         body = body.child(ui::section(p, "Manage"));
@@ -928,7 +937,10 @@ impl Latch {
                 cx,
                 |this, window, cx| this.edit(window, cx),
             )
-            .children(kbd(p, "secondary-shift-e")),
+            .children(kbd(
+                p,
+                &format!("secondary-{}", ShortcutAction::Edit.chord()),
+            )),
         );
         let error = p.color(Color::Error);
         let selected = p.color(Color::Selected);
@@ -1069,7 +1081,11 @@ impl Latch {
                     move |this, window, cx| this.run_command(id, window, cx),
                 )
                 .h(px(34.))
-                .children(command.keys.and_then(|keys| kbd(p, keys)));
+                .children(
+                    command
+                        .shortcut
+                        .and_then(|action| kbd(p, &format!("secondary-{}", action.chord()))),
+                );
             rows = rows.child(row);
             first = false;
         }
@@ -1324,7 +1340,10 @@ impl Latch {
                     cx,
                     |this, window, cx| this.lock(window, cx),
                 )
-                .children(kbd(p, "secondary-l")),
+                .children(kbd(
+                    p,
+                    &format!("secondary-{}", ShortcutAction::Lock.chord()),
+                )),
             );
         body = body.child(ui::section(p, "Preferences"));
         body = body

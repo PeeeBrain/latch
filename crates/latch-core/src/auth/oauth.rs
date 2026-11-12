@@ -25,18 +25,14 @@ fn get_app_secret() -> String {
 pub fn derive_key(user_id: &str) -> Result<[u8; 32], String> {
     let app_secret = get_app_secret();
 
-    // Use Argon2id to derive a 32-byte key
-    // Parameters: memory_cost=65536 (64MB), time_cost=3, parallelism=4
     let params =
         Params::new(65536, 3, 4, Some(32)).map_err(|e| format!("Invalid Argon2 params: {}", e))?;
 
     let argon2 = Argon2::new(argon2::Algorithm::Argon2id, argon2::Version::V0x13, params);
 
-    // Salt includes user_id to make keys user-specific
     let salt = format!("latch-vault-oauth-{}", user_id);
     let salt_bytes = salt.as_bytes();
 
-    // Derive key using Argon2id
     let mut key = [0u8; 32];
     argon2
         .hash_password_into(app_secret.as_bytes(), salt_bytes, &mut key)
@@ -103,12 +99,48 @@ mod tests {
     use super::*;
     use base64::{engine::general_purpose, Engine as _};
     use serde_json::json;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    fn token(payload: &str) -> String {
+        let header = general_purpose::URL_SAFE_NO_PAD.encode(r#"{"alg":"RS256","typ":"JWT"}"#);
+        let payload = general_purpose::URL_SAFE_NO_PAD.encode(payload);
+        let signature = general_purpose::URL_SAFE_NO_PAD.encode("signature");
+        format!("{header}.{payload}.{signature}")
+    }
+
+    fn claims(sub: Option<&str>) -> serde_json::Value {
+        let mut claims = json!({
+            "exp": SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs() + 3600,
+            "iss": "https://accounts.google.com",
+        });
+        if let Ok(client_id) = env::var("LATCH_OAUTH_CLIENT_ID") {
+            claims["aud"] = json!(client_id);
+        }
+        if let Some(sub) = sub {
+            claims["sub"] = json!(sub);
+        }
+        claims
+    }
 
     #[test]
-    fn test_decode_id_token_valid_structure() {
-        let valid_token = "eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIiwibmFtZSI6IkpvaG4gRG9lIiwiYXVkIjoiY2xpZW50X2lkIn0.signature";
-        let result = decode_id_token(valid_token);
-        assert!(result.is_err());
+    fn test_decode_id_token_valid_claims() {
+        let encoded = token(&claims(Some("1234567890")).to_string());
+
+        let result = decode_id_token(&encoded).unwrap();
+        assert_eq!(result.sub, "1234567890");
+        assert_eq!(extract_user_id(&encoded).unwrap(), "1234567890");
+    }
+
+    #[test]
+    fn test_decode_id_token_rejects_incomplete_claims() {
+        let incomplete = json!({ "sub": "1234567890" });
+        let incomplete = if let Ok(client_id) = env::var("LATCH_OAUTH_CLIENT_ID") {
+            json!({ "sub": "1234567890", "aud": client_id })
+        } else {
+            incomplete
+        };
+
+        assert!(decode_id_token(&token(&incomplete.to_string())).is_err());
     }
 
     #[test]
@@ -132,29 +164,20 @@ mod tests {
 
     #[test]
     fn test_extract_user_id_valid() {
-        let user_id = "test-user-id-123";
-        let payload = json!({ "sub": user_id });
-        let encoded = general_purpose::URL_SAFE_NO_PAD.encode(payload.to_string());
-        let token = format!("header.{}.signature", encoded);
-
-        let result = extract_user_id(&token);
-        assert!(result.is_err());
+        let result = extract_user_id(&token(&claims(Some("test-user-id-123")).to_string()));
+        assert_eq!(result.unwrap(), "test-user-id-123");
     }
 
     #[test]
     fn test_extract_user_id_missing_sub() {
-        let payload = json!({ "name": "John Doe" });
-        let encoded = general_purpose::URL_SAFE_NO_PAD.encode(payload.to_string());
-        let token = format!("header.{}.signature", encoded);
+        let encoded = token(&claims(None).to_string());
 
-        let result = extract_user_id(&token);
-        assert!(result.is_err());
+        assert!(extract_user_id(&encoded).is_err());
     }
 
     #[test]
     fn test_extract_user_id_invalid_json() {
-        let encoded = general_purpose::URL_SAFE_NO_PAD.encode("invalid json");
-        let token = format!("header.{}.signature", encoded);
+        let token = token("invalid json");
 
         let result = extract_user_id(&token);
         assert!(result.is_err());
@@ -167,10 +190,10 @@ mod tests {
     }
 
     #[test]
-    fn test_derive_key_returns_valid_key() {
+    fn test_derive_key_is_deterministic() {
         let user_id = "test-user-id-123";
         let key = derive_key(user_id).unwrap();
-        assert_eq!(key.len(), 32);
+        assert_eq!(key, derive_key(user_id).unwrap());
     }
 
     #[test]
@@ -187,20 +210,21 @@ mod tests {
     #[test]
     fn test_derive_key_empty_user_id() {
         let key = derive_key("").unwrap();
-        assert_eq!(key.len(), 32);
+        assert_ne!(key, derive_key(" ").unwrap());
     }
 
     #[test]
     fn test_derive_key_long_user_id() {
         let long_user_id = "a".repeat(1000);
         let key = derive_key(&long_user_id).unwrap();
-        assert_eq!(key.len(), 32);
+        let changed_user_id = format!("{}b", "a".repeat(999));
+        assert_ne!(key, derive_key(&changed_user_id).unwrap());
     }
 
     #[test]
     fn test_derive_key_unicode() {
         let unicode_user_id = "用户-123-пользователь";
         let key = derive_key(unicode_user_id).unwrap();
-        assert_eq!(key.len(), 32);
+        assert_ne!(key, derive_key("用户-123-пользователе").unwrap());
     }
 }
