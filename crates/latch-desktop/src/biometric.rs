@@ -1,11 +1,14 @@
 use zeroize::Zeroizing;
 
-#[cfg(any(target_os = "windows", target_os = "macos"))]
+#[cfg(any(target_os = "windows", target_os = "macos", target_os = "linux"))]
 const DOMAIN: &str = "com.latch.vault";
-#[cfg(any(target_os = "windows", target_os = "macos"))]
+#[cfg(any(target_os = "windows", target_os = "macos", target_os = "linux"))]
 const NAME: &str = "vault-encryption-key";
 
 pub fn supported() -> bool {
+    #[cfg(target_os = "linux")]
+    return std::path::Path::new(platform::POLICY).exists();
+    #[cfg(not(target_os = "linux"))]
     cfg!(any(target_os = "windows", target_os = "macos"))
 }
 
@@ -262,7 +265,119 @@ mod platform {
     }
 }
 
-#[cfg(not(any(target_os = "windows", target_os = "macos")))]
+/// Linux has no OS store that releases a key only after a fingerprint, so this is
+/// a presence gate: polkit runs the user's PAM stack (fingerprint, falling back to
+/// the login password), then the key is read from the login keyring through the
+/// Secret Service. See docs/adr/0003-linux-device-key.md for the trust model.
+#[cfg(target_os = "linux")]
+mod platform {
+    use super::*;
+    use oo7::{Keyring, zbus};
+    use std::collections::HashMap;
+
+    /// Installed by the deb; AppImage users install it by hand (README).
+    pub const POLICY: &str = "/usr/share/polkit-1/actions/com.latch.vault.policy";
+    const ACTION: &str = "com.latch.vault.unlock";
+    /// polkit `CheckAuthorizationFlags::AllowUserInteraction`: show the auth prompt.
+    const ALLOW_USER_INTERACTION: u32 = 1;
+    const ATTRIBUTES: [(&str, &str); 2] = [("service", DOMAIN), ("account", NAME)];
+
+    async fn authorize() -> Result<(), String> {
+        let unavailable = |_| "polkit is unavailable".to_string();
+        let bus = zbus::Connection::system().await.map_err(unavailable)?;
+        let name = bus
+            .unique_name()
+            .ok_or("polkit is unavailable")?
+            .to_string();
+        // A bus-name subject lets polkit resolve this process itself, without PID races.
+        let subject = (
+            "system-bus-name",
+            HashMap::from([("name", zbus::zvariant::Value::from(name))]),
+        );
+        let reply = bus
+            .call_method(
+                Some("org.freedesktop.PolicyKit1"),
+                "/org/freedesktop/PolicyKit1/Authority",
+                Some("org.freedesktop.PolicyKit1.Authority"),
+                "CheckAuthorization",
+                &(
+                    subject,
+                    ACTION,
+                    HashMap::<&str, &str>::new(),
+                    ALLOW_USER_INTERACTION,
+                    "",
+                ),
+            )
+            .await
+            .map_err(unavailable)?;
+        let (authorized, _, _): (bool, bool, HashMap<String, String>) =
+            reply.body().deserialize().map_err(unavailable)?;
+        if authorized {
+            Ok(())
+        } else {
+            Err("authentication was cancelled".into())
+        }
+    }
+
+    async fn keyring() -> Result<Keyring, String> {
+        let keyring = Keyring::new().await.map_err(|error| error.to_string())?;
+        keyring.unlock().await.map_err(|error| error.to_string())?;
+        Ok(keyring)
+    }
+
+    async fn stored(keyring: &Keyring) -> Result<Option<Zeroizing<String>>, String> {
+        let items = keyring
+            .search_items(&ATTRIBUTES)
+            .await
+            .map_err(|error| error.to_string())?;
+        let Some(item) = items.into_iter().next() else {
+            return Ok(None);
+        };
+        item.unlock().await.map_err(|error| error.to_string())?;
+        // Secret zeroizes on drop; the str borrow avoids an unzeroized copy.
+        let secret = item.secret().await.map_err(|error| error.to_string())?;
+        let value =
+            std::str::from_utf8(secret.as_bytes()).map_err(|_| "Invalid stored device key")?;
+        Ok(Some(Zeroizing::new(value.to_owned())))
+    }
+
+    // zbus::block_on is the executor zbus' own blocking API uses. Callers already
+    // run on a background thread, like the blocking Windows and macOS calls.
+    pub fn create_or_retrieve() -> Result<Zeroizing<String>, String> {
+        zbus::block_on(async {
+            authorize().await?;
+            let keyring = keyring().await?;
+            // Never replace a key that could still protect an existing vault.
+            if let Some(existing) = stored(&keyring).await? {
+                return Ok(existing);
+            }
+            let random = Zeroizing::new(latch_core::auth::password::generate_salt());
+            let value = Zeroizing::new(hex::encode(random.as_ref()));
+            keyring
+                .create_item("Latch vault key", &ATTRIBUTES, value.as_bytes(), false)
+                .await
+                .map_err(|error| error.to_string())?;
+            let verified = stored(&keyring)
+                .await?
+                .ok_or("Stored device key verification failed")?;
+            if verified.as_str() != value.as_str() {
+                return Err("Stored device key verification failed".into());
+            }
+            Ok(verified)
+        })
+    }
+
+    pub fn retrieve() -> Result<Zeroizing<String>, String> {
+        zbus::block_on(async {
+            authorize().await?;
+            stored(&keyring().await?)
+                .await?
+                .ok_or_else(|| "no device key is stored".into())
+        })
+    }
+}
+
+#[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "linux")))]
 mod platform {
     pub fn create_or_retrieve() -> Result<zeroize::Zeroizing<String>, String> {
         retrieve()

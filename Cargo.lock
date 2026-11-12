@@ -4382,6 +4382,7 @@ dependencies = [
  "objc2-core-foundation",
  "objc2-foundation 0.3.2",
  "objc2-security",
+ "oo7",
  "raw-window-handle",
  "reqwest",
  "semver",

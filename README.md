@@ -48,7 +48,7 @@ Latch opens one command window. Create or unlock a vault, then type to filter cr
 - Press Escape to go back and Tab/Shift+Tab to move between controls.
 - Ctrl+Space shows or hides Latch on all platforms when global shortcut registration succeeds.
 
-Native access supports a master password and device-key access through Windows Hello or macOS Keychain on supported devices. The app also provides timed password reveal, TOTP codes, configurable password generation, SimpleLogin/DuckDuckGo aliases, local password health checks, optional HIBP breach checks, and password/device-key rotation.
+Native access supports a master password and device-key access through Windows Hello, macOS Keychain, or on Linux a polkit fingerprint/login-password prompt with the key in the login keyring. The app also provides timed password reveal, TOTP codes, configurable password generation, SimpleLogin/DuckDuckGo aliases, local password health checks, optional HIBP breach checks, and password/device-key rotation.
 
 The vault locks after 30 minutes of inactivity. Copied secrets clear after 30 seconds if Latch still owns that clipboard content. On Windows/macOS, closing the window locks the vault and hides it to the tray when tray initialization succeeds. On Windows, minimizing or closing also removes Latch from the taskbar, and Quit lives in the tray menu. On Linux, closing quits the app.
 
@@ -81,6 +81,14 @@ Download installers from the [latest release](https://github.com/PeeeBrain/latch
 - Windows x64: run the `windows-x86_64-setup.exe` installer.
 - macOS Apple Silicon: open the `macos-aarch64.dmg` and drag Latch to Applications.
 - Linux x64: use the `linux-x86_64.AppImage`, run `chmod +x` on it, then launch it. Ubuntu 24.04 users can install the `linux-x86_64.deb` with `sudo apt install ./<downloaded-file>.deb`.
+
+Linux device-key unlock needs a Secret Service keyring (GNOME Keyring or KWallet) and Latch's polkit policy. The deb installs the policy. AppImage users install it once:
+
+```bash
+sudo curl -fsSL -o /usr/share/polkit-1/actions/com.latch.vault.policy https://raw.githubusercontent.com/PeeeBrain/latch/main/crates/latch-desktop/linux/com.latch.vault.policy
+```
+
+To use a fingerprint rather than your login password, enroll one (`fprintd-enroll`) and enable fingerprint login for your distro (Fedora: `sudo authselect enable-feature with-fingerprint`; Ubuntu: `sudo pam-auth-update`). The fingerprint guards against someone at an unlocked machine; see [ADR 0003](docs/adr/0003-linux-device-key.md) for how this differs from Windows and macOS.
 
 The deb requires Ubuntu 24.04 or compatible runtime libraries. AppImage also requires compatible host Wayland and GPU drivers. SHA-256 hashes are in `SHA256SUMS`. The `.sig` files and `.app.tar.gz` downloads support the updater; macOS users should install from the DMG.
 
