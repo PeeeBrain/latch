@@ -818,13 +818,13 @@ impl Latch {
     }
     fn copy(&mut self, text: Zeroizing<String>, cx: &mut Context<Self>) {
         let marker = uuid::Uuid::new_v4().to_string();
-        self.notice = match crate::clipboard::write(&text, &marker, cx) {
-            Ok(()) => "Copied. Clipboard clears in 30 seconds.".into(),
-            Err(error) => error,
-        };
-        // Track every attempt: a write can land even when it reports failure, and
-        // the clear only empties the clipboard while Latch still owns it.
-        self.clipboard = Some((text, marker, SystemTime::now()));
+        match crate::clipboard::write(&text, &marker, cx) {
+            Ok(()) => {
+                self.clipboard = Some((text, marker, SystemTime::now()));
+                self.notice = "Copied. Clipboard clears in 30 seconds.".into();
+            }
+            Err(error) => self.notice = error,
+        }
     }
     fn lock(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.reveal_until = None;
