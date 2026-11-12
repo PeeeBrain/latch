@@ -42,7 +42,7 @@ Native updates use the `windows-x86_64`, `macos-aarch64`, and `linux-x86_64` tar
 
 ## Installation and migration
 
-Follow [README.md](../README.md#downloads-and-upgrades). Tauri-to-GPUI installer continuity has not been verified, so the native packages are not published to the retired `latest.json` feed. Existing users must download and install the native release manually. Google vaults must first be switched to a master password in the previous app. Version 0.2.6 and its source tag remain available for migration.
+Follow [README.md](../README.md#install). Tauri-to-GPUI installer continuity has not been verified, so the native packages are not published to the retired `latest.json` feed. Existing users must download and install the native release manually. Google vaults must first be switched to a master password in the previous app. Version 0.2.6 and its source tag remain available for migration.
 
 Updater signatures do not provide Windows Authenticode or Apple Developer ID signing/notarization. These OS credentials are not configured in this repository. Expect unknown-publisher/Gatekeeper prompts. Native app launch, device-key access, GPU behavior, accessibility, and an installed native-to-native update still need acceptance on real supported platforms before announcing a production release.
 

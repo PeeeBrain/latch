@@ -4340,7 +4340,7 @@ dependencies = [
 
 [[package]]
 name = "latch-core"
-version = "0.3.4"
+version = "0.3.5"
 dependencies = [
  "aes-gcm",
  "argon2",
@@ -4367,7 +4367,7 @@ dependencies = [
 
 [[package]]
 name = "latch-desktop"
-version = "0.3.4"
+version = "0.3.5"
 dependencies = [
  "ashpd",
  "cargo-packager-updater",

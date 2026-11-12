@@ -1,120 +1,190 @@
 # Latch Password Manager
 
-A local password manager with a compact, keyboard-first GPUI interface for Windows, macOS, and Linux.
+A local, keyboard-first password manager for Windows, macOS, and Linux. One compact window handles search, copy, edit, password generation, health checks, and settings.
 
-The native Rust rewrite replaces the previous Tauri app. See [downloads and upgrades](#downloads-and-upgrades) for installation and migration.
+Your vault is a single encrypted file on your machine. There is no cloud, no account, and no password recovery: if you lose your master password, the data is gone.
 
-## Run in development
+## Install
 
-The native app runs from the repository root. It does not need Bun, React, a web server, or a WebView.
+Download the package for your platform from the [latest release](https://github.com/PeeeBrain/latch/releases/latest):
 
-Install Rust through rustup. The repository's `rust-toolchain.toml` selects Rust 1.98.1 with rustfmt and Clippy. Windows needs the MSVC C++ build tools and Windows SDK; macOS needs the Xcode command line tools. Linux needs the GPUI and GTK development packages listed in the native job in [ci.yml](.github/workflows/ci.yml).
+| Platform | File | How to install |
+| --- | --- | --- |
+| Windows x64 | `Latch_<version>_windows-x86_64-setup.exe` | Run the installer. |
+| macOS Apple Silicon | `Latch_<version>_macos-aarch64.dmg` | Open it and drag Latch to Applications. |
+| Linux x64 (Ubuntu 24.04+, Debian-based) | `Latch_<version>_linux-x86_64.deb` | `sudo apt install ./Latch_<version>_linux-x86_64.deb` |
+| Linux x64 (any distro) | `Latch_<version>_linux-x86_64.AppImage` | `chmod +x` the file, then run it. |
+
+On Linux, finish [Linux setup](#linux-setup) before first use, so that Ctrl+Space and fingerprint unlock work.
+
+Packages are not Windows Authenticode signed or Apple Developer ID signed and notarized. Windows may show an unknown-publisher prompt, and macOS may block Latch until you allow it in System Settings > Privacy & Security. Only approve a download you trust. Check it against `SHA256SUMS` from the same release. The `.sig` and `.app.tar.gz` files are for the in-app updater; you don't need them.
+
+Coming from the old Tauri version of Latch? Read [Upgrading from the Tauri app](#upgrading-from-the-tauri-app) first.
+
+## Linux setup
+
+### Before you install
+
+- **AppImage:** needs FUSE 2. If it doesn't start, install `libfuse2t64` (Ubuntu 24.04+) or `fuse-libs` (Fedora).
+- **deb:** needs Ubuntu 24.04 or newer, or a Debian-based distro with the same library packages. On other distros, use the AppImage.
+- **Device-key unlock:** needs a Secret Service keyring, which GNOME Keyring and KWallet both provide. Most desktops already run one.
+
+### Ctrl+Space to show and hide Latch
+
+On Linux, Latch asks your desktop for the shortcut through the XDG GlobalShortcuts portal, the only way to get one on Wayland. The portal only grants shortcuts to apps it can identify from a desktop file named `com.latch.passwordmanager.desktop`. Current packages don't install that file yet, so create it once:
+
+```sh
+mkdir -p ~/.local/share/applications
+cat > ~/.local/share/applications/com.latch.passwordmanager.desktop <<'EOF'
+[Desktop Entry]
+Type=Application
+Name=Latch
+Exec=latch-desktop
+NoDisplay=true
+EOF
+```
+
+For the AppImage, replace `Exec=latch-desktop` with the full path to your `.AppImage` file, and update it if you move the file. `NoDisplay=true` keeps it out of your app launcher.
+
+Then:
+
+1. Start (or restart) Latch.
+2. Your desktop asks whether Latch may register "Show or hide Latch" on Ctrl+Space. Allow it.
+3. Open Latch's Settings. It shows the key your desktop bound. If it says to assign a key, set one for Latch in your desktop's shortcut settings (on KDE: System Settings > Keyboard > Shortcuts). Latch picks up the change without a restart.
+
+This has been tested on KDE Plasma 6. Other desktops work if their portal supports global shortcuts. If yours doesn't, Settings says the shortcut is unavailable; open Latch from your app launcher instead. On X11 without the portal, Latch registers Ctrl+Space directly.
+
+### Fingerprint or login-password unlock (device key)
+
+On Linux, device-key unlock asks for your fingerprint or login password through a polkit prompt, and keeps the vault key in your login keyring. It needs Latch's polkit policy:
+
+- **deb:** installed for you.
+- **AppImage:** install it once:
+
+  ```sh
+  sudo curl -fsSL -o /usr/share/polkit-1/actions/com.latch.vault.policy https://raw.githubusercontent.com/PeeeBrain/latch/main/crates/latch-desktop/linux/com.latch.vault.policy
+  ```
+
+To use a fingerprint instead of your login password, enroll one with `fprintd-enroll`, then enable fingerprint login for your distro:
+
+- Fedora: `sudo authselect enable-feature with-fingerprint`
+- Ubuntu: `sudo pam-auth-update`
+
+On Linux the fingerprint is a presence check that guards against someone at your unlocked machine. It is not a hardware-bound key as on Windows and macOS; see [ADR 0003](docs/adr/0003-linux-device-key.md).
+
+### Other Linux differences
+
+- Closing the window quits Latch, and the vault locks.
+- In-app updates work only when you run the AppImage. To update a deb, download and install the newer deb.
+
+## Using Latch
+
+Latch opens one command window. Create or unlock a vault, then type to filter credentials and commands. The footer always shows what Enter will do.
+
+| Action | Windows / Linux | macOS |
+| --- | --- | --- |
+| Show or hide Latch from any app | Ctrl+Space | Ctrl+Space |
+| Move through the list | Up / Down | Up / Down |
+| Copy the selected password, or run the selected command | Enter | Enter |
+| Actions for the selected credential (details, edit, copy other fields) | Ctrl+K | Cmd+K |
+| New credential | Ctrl+N | Cmd+N |
+| Edit selected credential | Ctrl+Shift+E | Cmd+Shift+E |
+| Save credential | Ctrl+S, or Enter in a text field | Cmd+S, or Enter in a text field |
+| Lock | Ctrl+L | Cmd+L |
+| Settings | Ctrl+, | Cmd+, |
+| Reset appearance | Ctrl+Alt+R | Cmd+Alt+R |
+| Go back | Escape | Escape |
+| Move between controls | Tab / Shift+Tab | Tab / Shift+Tab |
+
+You can unlock with a master password or a device key: Windows Hello, macOS Keychain, or on Linux the polkit prompt described above. Latch also has timed password reveal, TOTP codes, a configurable password generator, SimpleLogin and DuckDuckGo email aliases, local password health checks, optional breach checks, and switching between master password and device key.
+
+**Timers.** The vault locks after 30 minutes without activity. Copied secrets clear from the clipboard after 30 seconds, unless something else has been copied since.
+
+**Closing the window.** On Windows and macOS, closing locks the vault and hides Latch to the tray. Open it again from the tray, with Ctrl+Space, or by launching it again. On Windows, minimizing also hides it from the taskbar, and Quit is in the tray menu. On Linux, closing quits.
+
+**Appearance.** Settings > Appearance imports colors from a T3 Code, VS Code, or Zed theme, or from editor `settings.json` color overrides, and previews them before applying. Latch stores the result in its own `settings.json` beside the vault, which you can open, edit, reload, or reset from Settings. Light and dark variants follow the OS. If custom colors make Latch hard to read, press Ctrl+Alt+R (Cmd+Alt+R on macOS) to reset.
+
+## Privacy and network use
+
+Latch works offline. It goes online only for these, and none of them send vault data:
+
+- **Favicons.** Credential icons load directly from the saved site's `https://<host>/favicon.ico`, with the URL's path and query removed and no cookies or credentials sent. No third-party icon service is used, and private-network addresses are never contacted. Requests bypass system proxies so this check applies to the real connection. Icons stay in memory until you lock.
+- **Breach checks (optional).** Health checks can ask Have I Been Pwned whether a password appears in known breaches. Only a short prefix of the password's SHA-1 hash leaves your machine.
+- **Email aliases (optional).** SimpleLogin and DuckDuckGo are contacted only when you create an alias.
+- **Updates.** Settings > Check for updates downloads the signed update feed from GitHub. Latch verifies the signature before installing.
+
+## Where your vault lives
+
+Latch stores everything in `vault.enc`:
+
+- Windows: `%APPDATA%\Latch\vault.enc`
+- macOS: `~/Library/Application Support/Latch/vault.enc`
+- Linux: `$XDG_CONFIG_HOME/latch/vault.enc`, which defaults to `~/.config/latch/vault.enc`
+
+The file format is the same on every OS, so you can move a password vault between machines. Password vaults use PBKDF2-HMAC-SHA256 (100,000 iterations) and AES-256-GCM, and older Argon2id vaults still open. Device-key vaults keep their key in the OS key store, so they open only on the machine and account that created them. The unlocked key stays in memory and is cleared on lock.
+
+Back up `vault.enc` before reinstalling, upgrading from the Tauri app, or switching how you unlock.
+
+## Updating
+
+Settings > Check for updates installs new versions on Windows, macOS, and the Linux AppImage. Installing locks the vault, verifies the download, installs, and closes Latch; open it again afterwards. For the deb, download and install the newer deb.
+
+### Upgrading from the Tauri app
+
+Versions before 0.3.1 were a Tauri app and won't offer this update. Install the native app by hand:
+
+1. If your vault uses Google sign-in, unlock it in the old app first and choose Settings > Switch to master password. Google sign-in is retired, and the native app leaves unmigrated Google vaults untouched but can't open them. [Version 0.2.6](https://github.com/PeeeBrain/latch/releases/tag/v0.2.6) is still available for this.
+2. Quit the old app fully, including its tray icon, and back up `vault.enc`.
+3. On Windows, uninstall the old app (especially if you used the MSI). On macOS, replace the old Latch.app in Applications.
+4. Install the native app as described in [Install](#install). Keep your vault file and OS keychain entries.
+5. Check that the new app unlocks your vault before you delete the old installation.
+
+## Troubleshooting
+
+- **Ctrl+Space does nothing.** Open Settings to see what your desktop granted. On Linux, follow [Ctrl+Space to show and hide Latch](#ctrlspace-to-show-and-hide-latch). On any platform, another app may already own Ctrl+Space; change Latch's key in your desktop's shortcut settings where possible, or open Latch from the app launcher.
+- **"Another Latch process is using this vault."** Latch is already running with this vault, perhaps hidden or from another install. Close it first.
+- **A Google vault won't open.** Migrate it in the old app first; see [Upgrading from the Tauri app](#upgrading-from-the-tauri-app).
+- **A vault won't open at all.** Latch never replaces a damaged or unsupported vault with an empty one. Keep the file and a backup, and open an issue.
+
+## Development
+
+### Run from source
+
+Install Rust with rustup. `rust-toolchain.toml` selects the right toolchain, rustfmt, and Clippy. You also need:
+
+- Windows: the MSVC C++ build tools and Windows SDK.
+- macOS: the Xcode command line tools.
+- Linux: the GPUI and GTK development packages listed in the native job in [ci.yml](.github/workflows/ci.yml).
+
+From the repository root:
 
 ```sh
 cargo run -p latch-desktop --locked
 ```
 
-This compiles and launches the current source in debug mode. Restart the command after changing Rust code. Launching an existing executable in `target/debug/` does not recompile it.
+This builds and launches a debug build. Restart the command after changing code; an old executable keeps running the old code.
 
-By default, development uses your normal vault. Close any other Latch host using that vault first; Latch takes an exclusive lock to prevent concurrent writes.
-
-For UI work with a separate vault, set `LATCH_DEV_VAULT` to a throwaway file path. Create its parent directory before launching. In PowerShell:
-
-```powershell
-$env:LATCH_DEV_VAULT = Join-Path $env:TEMP 'latch-dev/vault.enc'
-New-Item -ItemType Directory -Force (Split-Path $env:LATCH_DEV_VAULT) | Out-Null
-cargo run -p latch-desktop --locked
-```
-
-On macOS/Linux:
+By default this opens your real vault. For UI work, point debug builds at a throwaway vault with `LATCH_DEV_VAULT`, and create its folder first. A missing vault starts setup, and appearance settings live beside whichever vault is open.
 
 ```sh
 mkdir -p /tmp/latch-dev
 LATCH_DEV_VAULT=/tmp/latch-dev/vault.enc cargo run -p latch-desktop --locked
 ```
 
-The override works only in debug builds. A missing vault starts setup. Appearance settings also live beside the selected vault. In PowerShell, remove the override with `Remove-Item Env:LATCH_DEV_VAULT` before returning to your normal vault.
+In PowerShell:
 
-These launch commands are for developers to run. Agents must follow the [no-local-build policy](AGENTS.md), use check/test commands, and use CI artifacts for runtime validation.
-
-## How the app works
-
-Latch opens one command window. Create or unlock a vault, then type to filter credentials and commands. Search, credential editing, password generation, health checks, and settings all stay inside this window. The footer shows the primary action and its shortcut; the Actions panel provides commands for the selected credential.
-
-- Press Up/Down to navigate and Enter to copy the selected credential's password or run a selected command.
-- Open Actions with Ctrl+K, or Cmd+K on macOS, to view details, edit, or copy other fields.
-- Use Ctrl+N to add a credential, Ctrl+Shift+E to edit, Ctrl+L to lock, and Ctrl+, to open settings. Use Cmd for these shortcuts on macOS.
-- Save a new or edited credential with the Save credential button or Ctrl+S, or Cmd+S on macOS. Enter saves while a text field is focused.
-- Press Escape to go back and Tab/Shift+Tab to move between controls.
-- Ctrl+Space shows or hides Latch on all platforms when global shortcut registration succeeds. On Linux, Latch asks the desktop through the XDG GlobalShortcuts portal (the only way on Wayland), and the desktop may ask you to confirm or pick another key; Settings shows the key it bound.
-
-Native access supports a master password and device-key access through Windows Hello, macOS Keychain, or on Linux a polkit fingerprint/login-password prompt with the key in the login keyring. The app also provides timed password reveal, TOTP codes, configurable password generation, SimpleLogin/DuckDuckGo aliases, local password health checks, optional HIBP breach checks, and password/device-key rotation.
-
-The vault locks after 30 minutes of inactivity. Copied secrets clear after 30 seconds if Latch still owns that clipboard content. On Windows/macOS, closing the window locks the vault and hides it to the tray when tray initialization succeeds. On Windows, minimizing or closing also removes Latch from the taskbar, and Quit lives in the tray menu. On Linux, closing quits the app.
-
-Credential rows and details load favicons directly from the saved website's HTTPS `/favicon.ico`, including redirects to public HTTPS image hosts. Latch strips the saved URL's path and query, sends no vault credentials or cookies, and uses no third-party favicon service. Icons and failed lookups stay in memory until lock. Missing URLs, unavailable icons, and private-network sites keep their initial tile. Requests bypass system proxies so destination checks apply to the actual connection. Sites that require a proxy or only declare icons in HTML keep their initial tile too.
-
-## Appearance
-
-Open Settings, then Appearance to import a T3 Code, VS Code, or Zed theme, or editor `settings.json` color overrides. Latch keeps supported colors, previews them before applying, and converts imported themes into editor settings. Light/dark variants follow the OS appearance.
-
-You can open, edit, reload, or reset Latch's appearance `settings.json` from the app. It lives beside the vault. There is no preset theme gallery or separate public Latch theme format. Ctrl+Alt+R or Cmd+Alt+R resets appearance if custom colors make the interface hard to read.
-
-## Architecture and storage
-
-`crates/latch-desktop` owns the GPUI window, Rust text input, clipboard, tray, global shortcut, platform device-key integration, and signed updater. It uses GPUI Kit's component layer for the title bar and shortcut formatting, with embedded Lucide icons.
-
-`crates/latch-core` owns authentication, encryption, vault storage, the unlocked workspace, search, password generation, aliases, and health checks. The root Cargo workspace owns the toolchain, lockfile, and target directory.
-
-The encrypted vault file is `vault.enc` in the OS configuration directory:
-
-- Windows: `%APPDATA%\Latch\vault.enc`
-- macOS: `~/Library/Application Support/Latch/vault.enc`
-- Linux: `$XDG_CONFIG_HOME/latch/vault.enc`, defaulting to `~/.config/latch/vault.enc`
-
-The file format is shared across platforms. Password vaults use PBKDF2-HMAC-SHA256 with 100,000 iterations and AES-256-GCM encryption. Native also reads historical Argon2id password vaults. Device-key vaults use platform key storage. The unlocked session key stays in memory and clears on lock. There is no master-password recovery.
-
-## Downloads and upgrades
-
-Download installers from the [latest release](https://github.com/PeeeBrain/latch/releases/latest). Asset names include the version, operating system, and architecture:
-
-- Windows x64: run the `windows-x86_64-setup.exe` installer.
-- macOS Apple Silicon: open the `macos-aarch64.dmg` and drag Latch to Applications.
-- Linux x64: use the `linux-x86_64.AppImage`, run `chmod +x` on it, then launch it. Ubuntu 24.04 users can install the `linux-x86_64.deb` with `sudo apt install ./<downloaded-file>.deb`.
-
-Linux device-key unlock needs a Secret Service keyring (GNOME Keyring or KWallet) and Latch's polkit policy. The deb installs the policy. AppImage users install it once:
-
-```bash
-sudo curl -fsSL -o /usr/share/polkit-1/actions/com.latch.vault.policy https://raw.githubusercontent.com/PeeeBrain/latch/main/crates/latch-desktop/linux/com.latch.vault.policy
+```powershell
+$env:LATCH_DEV_VAULT = Join-Path $env:TEMP 'latch-dev/vault.enc'
+New-Item -ItemType Directory -Force (Split-Path $env:LATCH_DEV_VAULT) | Out-Null
+cargo run -p latch-desktop --locked
+Remove-Item Env:LATCH_DEV_VAULT  # back to your normal vault
 ```
 
-To use a fingerprint rather than your login password, enroll one (`fprintd-enroll`) and enable fingerprint login for your distro (Fedora: `sudo authselect enable-feature with-fingerprint`; Ubuntu: `sudo pam-auth-update`). The fingerprint guards against someone at an unlocked machine; see [ADR 0003](docs/adr/0003-linux-device-key.md) for how this differs from Windows and macOS.
+On Linux, Ctrl+Space in a debug build needs the same desktop file as [Linux setup](#ctrlspace-to-show-and-hide-latch), with `Exec=` set to the full path of `target/debug/latch-desktop`.
 
-The deb requires Ubuntu 24.04 or compatible runtime libraries. AppImage also requires compatible host Wayland and GPU drivers. SHA-256 hashes are in `SHA256SUMS`. The `.sig` files and `.app.tar.gz` downloads support the updater; macOS users should install from the DMG.
+### Checks
 
-Release packages have Minisign signatures for the in-app updater. They are currently not Windows Authenticode signed or Apple Developer ID signed/notarized. Windows may show an unknown-publisher prompt, and macOS may block the app until you approve it through System Settings > Privacy & Security. Only approve a download you trust. OS signing and device/accessibility acceptance remain platform validation work.
-
-### Existing installations
-
-The first GPUI release requires manual installation for users of the previous Tauri app. The new packages are not offered through its `latest.json` updater feed. Quit the old app fully, including its tray process, and back up `vault.enc` before installing. On Windows, uninstall the previous Latch application before running the native NSIS installer, especially if you used the MSI. On macOS, replace the previous Latch.app in Applications. Keep your vault file and OS keychain entries.
-
-Google OAuth is retired. Before removing the previous app, unlock any Google vault there and choose Settings > Switch to master password. The native app detects an unmigrated Google vault and leaves it unchanged. The [previous v0.2.6 release](https://github.com/PeeeBrain/latch/releases/tag/v0.2.6) remains available for migration; the old host's source is available at its tag. Close it before opening the same vault in the native app. Retain access through the previous installation until you have verified the new app can unlock your vault.
-
-### Native updates
-
-Installed native Windows/macOS apps and Linux AppImage launches use the signed `native-latest.json` feed through Settings > Check for updates. Installation locks the vault, verifies the download, installs, and exits Latch. Reopen the app afterward. Linux deb installations require downloading and installing the newer deb; in-app installation is disabled for them.
-
-## CI previews and packages
-
-Pull-request CI uploads `gpui-preview-<OS>-<architecture>` artifacts with a release-mode executable. Download and extract the artifact for your platform, then launch `latch-desktop.exe` on Windows or `latch-desktop` on macOS/Linux. These previews use your normal vault location and are not signed installers.
-
-On macOS/Linux, restore executable permission with `chmod +x latch-desktop`. Windows debug executables depend on shader files on their build machine; CI release previews embed those shaders and are portable.
-
-The Native GPUI packages workflow uploads Windows NSIS, macOS app/DMG, and Linux deb/AppImage artifacts. Maintainers can dispatch it on a branch with `sign` enabled to rehearse release packaging without publishing. See [the release procedure](docs/releases.md).
-
-## Contributing and checks
-
-See [AGENTS.md](AGENTS.md) for repository policies and [CONTRIBUTING.md](CONTRIBUTING.md) for contribution guidance. From the repository root, run:
+From the repository root:
 
 ```sh
 cargo fmt --all -- --check
@@ -125,14 +195,20 @@ cargo test -p latch-desktop --locked
 cargo clippy -p latch-core -p latch-desktop --all-targets --locked -- -D warnings
 ```
 
-The `legacy-oauth` feature exists only for historical vault compatibility tests. The desktop dependency must never enable it. Builds and packaging run in GitHub Actions. Native launch, GPU, accessibility, and installer validation need runtime checks on each supported platform.
+The `legacy-oauth` feature exists only to test that old vaults still open. The desktop app must never enable it.
 
-## Troubleshooting
+### Code layout
 
-- An old interface usually means an old executable is running. Close it and restart with `cargo run -p latch-desktop --locked`.
-- If another process holds the vault lock, close the other Latch host or choose a separate development vault.
-- If Ctrl+Space is unavailable, another application or the desktop environment may own it. Open Latch from the application launcher. On Linux, change the key in your desktop's shortcut settings, where Latch appears once it has asked for one. Wayland desktops without the GlobalShortcuts portal cannot give Latch a global shortcut.
-- A Google vault requires migration through the previous app before upgrading. A damaged or unsupported vault is preserved rather than replaced with an empty one.
+- `crates/latch-core` owns everything that touches secrets: authentication, encryption, vault storage, the unlocked session, search, password generation, aliases, and health checks. It has no UI.
+- `crates/latch-desktop` is the GPUI app: the window, text input, clipboard, tray, global shortcut, device-key integration, and signed updater.
+
+The root Cargo workspace owns the toolchain, lockfile, and `target/` directory. [AGENTS.md](AGENTS.md) covers repository policy, [CONTRIBUTING.md](CONTRIBUTING.md) contribution guidance, and `docs/adr/` the main design decisions.
+
+### CI builds
+
+Pull-request CI uploads a release-mode executable for each platform as `gpui-preview-<OS>-<architecture>`. Extract it and run `latch-desktop.exe` (Windows) or `latch-desktop` (macOS/Linux; run `chmod +x` on it first). Previews use your normal vault location and are not installers.
+
+The Native GPUI packages workflow builds the real installers. Maintainers can run it on a branch with `sign` enabled to rehearse a release without publishing; see [the release procedure](docs/releases.md).
 
 ## License
 
