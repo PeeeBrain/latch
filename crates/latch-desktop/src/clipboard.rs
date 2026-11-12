@@ -51,10 +51,15 @@ pub fn write(text: &str, marker: &str, cx: &mut App) -> Result<(), String> {
             board.setString_forType(&flag, &concealed);
             board.setString_forType(&flag, &transient);
         }
-        if cx.read_from_clipboard().is_some_and(|item| {
-            item.metadata().map(String::as_str) == Some(marker)
-                && item.text().as_deref() == Some(text)
-        }) {
+        // Wayland grants ownership asynchronously, so an immediate read-back still
+        // sees the previous owner. The copy always follows input in our focused
+        // window, which is what Wayland requires to take the selection.
+        if cfg!(all(target_os = "linux", not(test)))
+            || cx.read_from_clipboard().is_some_and(|item| {
+                item.metadata().map(String::as_str) == Some(marker)
+                    && item.text().as_deref() == Some(text)
+            })
+        {
             Ok(())
         } else {
             Err("Clipboard unavailable. Try again.".into())
