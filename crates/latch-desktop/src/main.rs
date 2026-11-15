@@ -1,5 +1,6 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 mod app;
+mod autostart;
 mod biometric;
 mod clipboard;
 mod favicon;
@@ -18,6 +19,7 @@ impl Drop for ProcessLock {
     }
 }
 fn main() {
+    let minimized = std::env::args_os().any(|argument| argument == autostart::MINIMIZED_ARG);
     // Debug builds can point at a throwaway vault for UI work.
     let dev_vault = std::env::var_os("LATCH_DEV_VAULT").filter(|_| cfg!(debug_assertions));
     let storage = match dev_vault.map_or_else(VaultStorage::new, |path| {
@@ -32,6 +34,9 @@ fn main() {
     let process_lock = match storage.acquire_process_lock() {
         Ok(lock) => lock,
         Err(error) => {
+            if minimized {
+                return;
+            }
             #[cfg(target_os = "windows")]
             integration::present_running_instance();
             eprintln!("{error}");
@@ -73,12 +78,21 @@ fn main() {
             match gpui_kit::open_window(options, cx, |window, cx| {
                 cx.new(|cx| app::Latch::new(storage, window, cx))
             }) {
-                Ok((window, view)) => integration::start(window, view, cx),
+                Ok((window, view)) => {
+                    integration::start(window, view, cx);
+                    if minimized {
+                        let _ = window.update(cx, |_, window, cx| {
+                            integration::dismiss(window, cx);
+                        });
+                    }
+                }
                 Err(error) => {
                     eprintln!("Unable to open Latch: {error}");
                     cx.quit();
                 }
             }
-            cx.activate(true);
+            if !minimized {
+                cx.activate(true);
+            }
         });
 }

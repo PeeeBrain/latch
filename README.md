@@ -102,6 +102,8 @@ You can unlock with a master password or a device key: Windows Hello, macOS Keyc
 
 **Closing the window.** On Windows and macOS, closing locks the vault and hides Latch to the tray. Open it again from the tray, with Ctrl+Space, or by launching it again. On Windows, minimizing also hides it from the taskbar, and Quit is in the tray menu. On Linux, closing quits.
 
+**Start at login.** Settings > Start at login opens Latch minimized when you sign in. It adds a per-user login entry: the `Run` registry key on Windows, a LaunchAgent on macOS, and an XDG autostart file on Linux. Turn it off in the same place before deleting or moving the app.
+
 **Appearance.** Settings > Appearance imports colors from a T3 Code, VS Code, or Zed theme, or from editor `settings.json` color overrides, and previews them before applying. Latch stores the result in its own `settings.json` beside the vault, which you can open, edit, reload, or reset from Settings. Light and dark variants follow the OS. If custom colors make Latch hard to read, press Ctrl+Alt+R (Cmd+Alt+R on macOS) to reset.
 
 ## Privacy and network use

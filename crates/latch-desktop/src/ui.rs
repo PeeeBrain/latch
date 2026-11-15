@@ -12,7 +12,7 @@ gpui_kit::assets::icon_assets!(pub Icons, [
     ExternalLink, Eye, Globe, Info, KeyRound, Lock, LockKeyhole, Mail, Palette, Pencil, Plus,
     RefreshCw, Search, Settings, ShieldAlert, ShieldCheck, TriangleAlert, User, WandSparkles,
     WindowClose, WindowMaximize, WindowMinimize, WindowRestore, Trash, FingerprintPattern, FileText,
-    RotateCw,
+    RotateCw, LogIn,
 ]);
 
 pub use gpui_kit::assets::IconName as Icon;
@@ -94,6 +94,29 @@ pub fn tile(p: &Palette, content: impl IntoElement, tint: Option<Hsla>) -> Div {
         .text_color(tint)
         .text_size(px(13.))
         .child(content)
+}
+
+/// Check box for on/off rows; pair the row with `aria_selected(checked)`.
+pub fn checkbox(p: &Palette, checked: bool) -> Div {
+    let check = div()
+        .flex_shrink_0()
+        .size(px(18.))
+        .mx(px(3.))
+        .rounded(px(5.))
+        .flex()
+        .items_center()
+        .justify_center()
+        .text_size(px(12.));
+    if checked {
+        check
+            .bg(p.color(Color::Button))
+            .text_color(p.color(Color::ButtonText))
+            .child(Icon::Check)
+    } else {
+        check
+            .border_1()
+            .border_color(p.color(Color::Muted).opacity(0.6))
+    }
 }
 
 /// Small muted pill for row accessories and data such as codes.
