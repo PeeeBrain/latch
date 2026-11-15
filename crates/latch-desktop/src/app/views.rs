@@ -1349,6 +1349,25 @@ impl Latch {
         body = body
             .child(
                 self.icon_row(
+                    "start-at-login",
+                    Icon::LogIn,
+                    "Start at login",
+                    Some("Opens minimized when you sign in"),
+                    cx,
+                    |this, _, cx| {
+                        let enabled = !this.start_at_login;
+                        match crate::autostart::set(enabled) {
+                            Ok(()) => this.start_at_login = enabled,
+                            Err(error) => this.notice = error,
+                        }
+                        cx.notify();
+                    },
+                )
+                .aria_selected(self.start_at_login)
+                .child(ui::checkbox(p, self.start_at_login)),
+            )
+            .child(
+                self.icon_row(
                     "providers",
                     Icon::Mail,
                     "Email alias providers",
@@ -1706,31 +1725,10 @@ impl Latch {
         .into_iter()
         .enumerate()
         {
-            let check = div()
-                .flex_shrink_0()
-                .size(px(18.))
-                .mx(px(3.))
-                .rounded(px(5.))
-                .flex()
-                .items_center()
-                .justify_center()
-                .text_size(px(12.))
-                .map(|check| {
-                    if enabled {
-                        check
-                            .bg(p.color(Color::Button))
-                            .text_color(p.color(Color::ButtonText))
-                            .child(Icon::Check)
-                    } else {
-                        check
-                            .border_1()
-                            .border_color(p.color(Color::Muted).opacity(0.6))
-                    }
-                });
             body = body.child(
                 self.row(
                     ("generator-option", index),
-                    check,
+                    ui::checkbox(p, enabled),
                     label,
                     None,
                     false,

@@ -28,5 +28,6 @@ Every recipe below passes as written.
 - [Search and copy](./search-copy.md): filtering, copy password, username, one-time code, clipboard on lock.
 - [Command Palette](./palette.md): Ctrl+K actions, `>` root commands, Escape, the unsaved-draft guard.
 - [Password generator](./generator.md): open, length, use, copy, discard. Run at `720x900`.
+- [Settings](./settings.md): open, Start at login.
 
-Not yet mapped: Password health, Settings, master password and device-key Rotate, Appearance import, alias providers.
+Not yet mapped: Password health, the rest of Settings, master password and device-key Rotate, Appearance import, alias providers.

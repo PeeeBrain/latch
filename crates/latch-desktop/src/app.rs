@@ -278,6 +278,8 @@ pub struct Latch {
     generator_options: PasswordOptions,
     generator_return: Page,
     update: Option<cargo_packager_updater::Update>,
+    /// Mirrors the OS login entry; read once at startup and after each toggle.
+    start_at_login: bool,
 }
 impl Latch {
     fn auth_state(storage: &VaultStorage) -> (Page, String, bool, bool) {
@@ -362,6 +364,7 @@ impl Latch {
             generator_options: PasswordOptions::default(),
             generator_return: Page::Browse,
             update: None,
+            start_at_login: crate::autostart::enabled(),
         };
         cx.observe(&this.query, |this, query, cx| {
             if this.page == Page::Browse

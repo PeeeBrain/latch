@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.6] - 2026-11-15
+
+### Added
+- Settings > Start at login opens Latch minimized when you sign in, on Windows, macOS, and Linux. It is off by default.
+
 ### Fixed
 - Clear displayed Credential drafts and the clipboard when the Session has already expired in a background operation.
 - Keep unlock blocked after a failed update installation until the pending lock completes.
