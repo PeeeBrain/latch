@@ -164,36 +164,92 @@ mod tests {
 
 #[cfg(all(not(test), target_os = "windows"))]
 mod platform {
-    use std::os::windows::ffi::OsStrExt;
+    use std::os::windows::ffi::{OsStrExt, OsStringExt};
     use windows::{
         Win32::{
-            Foundation::{ERROR_FILE_NOT_FOUND, ERROR_SUCCESS},
+            Foundation::ERROR_FILE_NOT_FOUND,
             System::Registry::{
-                HKEY, HKEY_CURRENT_USER, REG_SZ, RRF_RT_ANY, RegCloseKey, RegCreateKeyW,
-                RegDeleteKeyValueW, RegGetValueW, RegSetValueExW,
+                HKEY, HKEY_CURRENT_USER, REG_ROUTINE_FLAGS, REG_SZ, RRF_RT_REG_BINARY,
+                RRF_RT_REG_SZ, RegCloseKey, RegCreateKeyW, RegDeleteKeyValueW, RegGetValueW,
+                RegSetValueExW,
             },
         },
-        core::w,
+        core::{PCWSTR, w},
     };
 
-    const RUN_KEY: windows::core::PCWSTR = w!("Software\\Microsoft\\Windows\\CurrentVersion\\Run");
+    const RUN_KEY: PCWSTR = w!("Software\\Microsoft\\Windows\\CurrentVersion\\Run");
+    /// Startup apps (Settings, Task Manager) record their on/off switch here, and
+    /// Windows skips a Run entry whose first byte is odd. No value means on.
+    const APPROVED_KEY: PCWSTR =
+        w!("Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\StartupApproved\\Run");
 
-    pub fn enabled() -> bool {
-        // SAFETY: Static, terminated names; no output buffer is requested.
+    fn read(key: PCWSTR, kind: REG_ROUTINE_FLAGS) -> Option<Vec<u8>> {
+        let mut size = 0u32;
+        // SAFETY: Static, terminated names; the first call only asks for the size,
+        // the second writes at most `size` bytes into a buffer of that length.
         unsafe {
             RegGetValueW(
                 HKEY_CURRENT_USER,
-                RUN_KEY,
+                key,
                 w!("Latch"),
-                RRF_RT_ANY,
+                kind,
                 None,
                 None,
+                Some(&mut size),
+            )
+            .ok()
+            .ok()?;
+            let mut data = vec![0u8; size as usize];
+            RegGetValueW(
+                HKEY_CURRENT_USER,
+                key,
+                w!("Latch"),
+                kind,
                 None,
-            ) == ERROR_SUCCESS
+                Some(data.as_mut_ptr().cast()),
+                Some(&mut size),
+            )
+            .ok()
+            .ok()?;
+            data.truncate(size as usize);
+            Some(data)
         }
     }
 
+    /// Whether Windows will start Latch at sign-in. A release build also re-points
+    /// an entry whose executable is gone, so a moved install keeps starting.
+    pub fn enabled() -> bool {
+        let Some(command) = read(RUN_KEY, RRF_RT_REG_SZ) else {
+            return false;
+        };
+        if read(APPROVED_KEY, RRF_RT_REG_BINARY)
+            .is_some_and(|flags| flags.first().is_some_and(|flag| flag & 1 == 1))
+        {
+            return false;
+        }
+        // Our command is `"<exe>" --minimized`; the path sits between the first two quotes.
+        let wide: Vec<u16> = command
+            .as_chunks::<2>()
+            .0
+            .iter()
+            .map(|unit| u16::from_le_bytes(*unit))
+            .collect();
+        let missing = wide
+            .split(|&unit| unit == u16::from(b'"'))
+            .nth(1)
+            .is_some_and(|path| {
+                !std::path::Path::new(&std::ffi::OsString::from_wide(path)).exists()
+            });
+        if missing && !cfg!(debug_assertions) {
+            let _ = set(true);
+        }
+        true
+    }
+
     pub fn set(enabled: bool) -> Result<(), windows::core::Error> {
+        // Latch's own toggle wins over an earlier Startup apps "off".
+        // SAFETY: The predefined handle and static, terminated names are valid.
+        let _ = unsafe { RegDeleteKeyValueW(HKEY_CURRENT_USER, APPROVED_KEY, w!("Latch")) };
         if !enabled {
             // SAFETY: The predefined handle and static, terminated names are valid.
             let result = unsafe { RegDeleteKeyValueW(HKEY_CURRENT_USER, RUN_KEY, w!("Latch")) };
