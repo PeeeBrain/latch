@@ -8,6 +8,7 @@ The generator shows a fresh password, lets the user change its length and option
 - `gen-length` shortens or lengthens it, clamped to 8–128.
 - `gen-use-new` opens a new Credential with the password filled.
 - `gen-use-edit` fills the Password of the form it came from.
+- `gen-from-details` creates a separate Credential when opened from another Credential's Details.
 - `gen-copy` copies the generated password.
 - `gen-discard` leaves a generated draft without saving.
 
@@ -50,6 +51,36 @@ expect page Generator
 press enter
 expect page Edit
 shot use-edit
+```
+
+Run this separately to check that a viewed Credential's identity does not carry into a generated draft:
+
+```text
+unlock
+add Alpha | a@x.invalid | alpha secret | alpha.invalid
+press ctrl-k
+type View selected credential
+press enter
+expect page Details
+press ctrl-k
+type generate
+press enter
+expect page Generator
+press enter
+expect page Edit
+expect focus field 0
+shot generated-draft
+type Bravo
+press tab
+type b@x.invalid
+press ctrl-s
+expect notice Saved to encrypted vault
+expect rows Alpha, Bravo
+press ctrl-l
+expect page Locked
+unlock
+expect rows Alpha, Bravo
+expect vault-lacks alpha secret
 ```
 
 ## Gotchas
