@@ -56,7 +56,7 @@ We need to be on the same page with terminology. When communicating, use this la
 
 - Smallest proof that the change works. While iterating, check and test only the crate you touched: `cargo check -p <crate> --all-targets --locked`, `cargo test -p <crate> --locked [test_name]`.
 - Don't add tests by default. A behavior change in crypto, vault I/O, auth, Session, or migrations gets one focused test for that behavior; anything else, ask first. Never delete or weaken an existing test to make it pass.
-- UI changes have no local runtime check. Say what the developer should look at in a CI artifact or their own `cargo run`.
+- UI behavior and looks: prove them with the `verify-latch` skill. It plays a short script against the real Command Palette in a sandbox Vault through `cargo test` (no launch) and saves real screenshots, before and after. Dark mode, window controls, hotkey, tray, OS clipboard, and device key still need a CI artifact or the developer's own `cargo run`; say what to look at.
 - Before a PR, run the full checklist from the repo root. CI runs the same commands with `-D warnings`, so anything that fails here fails there:
 
   ```bash
