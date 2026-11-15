@@ -2,9 +2,9 @@ Latch now uses a native GPUI interface on Windows, macOS, and Linux.
 
 ## Install
 
-- Windows x64: download and run `Latch_0.3.5_windows-x86_64-setup.exe`.
-- macOS Apple Silicon: download `Latch_0.3.5_macos-aarch64.dmg` and copy Latch to Applications.
-- Linux x64: download `Latch_0.3.5_linux-x86_64.AppImage`, give it executable permission, and launch it. Ubuntu 24.04 users can use `Latch_0.3.5_linux-x86_64.deb` instead.
+- Windows x64: download and run `Latch_0.3.6_windows-x86_64-setup.exe`.
+- macOS Apple Silicon: download `Latch_0.3.6_macos-aarch64.dmg` and copy Latch to Applications.
+- Linux x64: download `Latch_0.3.6_linux-x86_64.AppImage`, give it executable permission, and launch it. Ubuntu 24.04 users can use `Latch_0.3.6_linux-x86_64.deb` instead.
 
 Linux needs a few one-time steps for the Ctrl+Space shortcut and device-key unlock. See [Linux setup](https://github.com/PeeeBrain/latch#linux-setup) in the README.
 

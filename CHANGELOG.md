@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.6] - 2026-11-15
+
 ### Added
 - Settings > Start at login opens Latch minimized when you sign in, on Windows, macOS, and Linux. It is off by default.
 
