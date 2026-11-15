@@ -30,3 +30,4 @@ shot start-at-login-off
 ## Gotchas
 
 - Under `cargo test` the login entry is kept in memory, so the drive never registers the test binary with the OS. The check box state is the proof; the OS entry needs the developer's `cargo run` or a CI artifact.
+- Turning it on from `cargo run` registers `target/debug/latch-desktop`, which opens the real Vault at the next login (no `LATCH_DEV_VAULT` there). Turn it off again after checking.

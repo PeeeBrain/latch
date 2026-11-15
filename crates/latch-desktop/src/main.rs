@@ -69,6 +69,8 @@ fn main() {
                     gpui_kit::Bounds::centered(None, gpui_kit::size(px(720.), px(480.)), cx),
                 )),
                 window_min_size: Some(gpui_kit::size(px(520.), px(360.))),
+                // A login launch must not take focus from what the user opened first.
+                focus: !minimized,
                 // Linux defaults to the compositor's frame, which KDE draws on top
                 // of our title bar. Ours already carries the window controls.
                 #[cfg(target_os = "linux")]

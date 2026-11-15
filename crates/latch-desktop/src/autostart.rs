@@ -8,6 +8,17 @@ pub fn enabled() -> bool {
 
 /// Registers or removes the current executable's per-user login entry.
 pub fn set(enabled: bool) -> Result<(), String> {
+    // Run from a DMG or a quarantined download, macOS hands Latch a path that
+    // is gone after a reboot, so the entry would silently do nothing.
+    #[cfg(all(not(test), target_os = "macos"))]
+    if enabled
+        && std::env::current_exe().is_ok_and(|exe| {
+            let exe = exe.to_string_lossy();
+            exe.contains("/AppTranslocation/") || exe.starts_with("/Volumes/")
+        })
+    {
+        return Err("Move Latch to Applications first".into());
+    }
     platform::set(enabled).map_err(|_| "Couldn't update start at login".to_string())
 }
 
@@ -206,19 +217,5 @@ mod platform {
             let _ = RegCloseKey(key);
             result.ok()
         }
-    }
-}
-
-#[cfg(all(
-    not(test),
-    not(any(target_os = "windows", target_os = "macos", target_os = "linux"))
-))]
-mod platform {
-    pub fn enabled() -> bool {
-        false
-    }
-
-    pub fn set(_: bool) -> Result<(), &'static str> {
-        Err("Start at login is unavailable")
     }
 }
