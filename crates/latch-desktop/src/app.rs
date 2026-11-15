@@ -1787,6 +1787,8 @@ pub fn init(cx: &mut App) {
 }
 
 #[cfg(test)]
+mod drive;
+#[cfg(test)]
 mod tests {
     use super::{Latch, Page, Submit};
     use gpui_kit::{Focusable, TestAppContext};
