@@ -110,7 +110,7 @@ pub fn checkbox(p: &Palette, checked: bool) -> Div {
     if checked {
         check
             .bg(p.color(Color::Button))
-            .text_color(p.color(Color::ButtonText))
+            .text_color(p.button_text(Color::Button, Color::Background))
             .child(Icon::Check)
     } else {
         check
