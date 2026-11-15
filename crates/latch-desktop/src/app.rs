@@ -77,6 +77,27 @@ pub enum ButtonKind {
     /// Error-tinted destructive action.
     Danger,
 }
+/// The operation that owns the Command Palette's next completion.
+#[derive(Clone, Copy, PartialEq, Debug)]
+enum Operation {
+    Idle,
+    /// A Vault, network, or update-check task; its reply is dropped if the
+    /// epoch moved on.
+    Working,
+    /// A lock is in flight; only the newest lock's completion returns to Idle.
+    Locking,
+    /// A signed update is installing. Locks keep it, and its failure relocks.
+    Installing,
+}
+/// The Credential the Edit page saves.
+#[derive(Default)]
+struct Draft {
+    /// The Credential being replaced; `None` saves a new one.
+    id: Option<String>,
+    /// `(provider, username)` when an alias provider produced the username.
+    /// It is saved only while the username still matches.
+    alias: Option<(String, Zeroizing<String>)>,
+}
 enum Reply {
     Browse(Vec<EntryPreview>),
     Detail(Entry),
@@ -235,11 +256,11 @@ pub struct Latch {
     favicon_cancel: tokio::sync::watch::Sender<()>,
     selected: usize,
     scroll: ScrollHandle,
-    editing: Option<String>,
+    draft: Draft,
     detail: Option<Entry>,
     reveal_until: Option<SystemTime>,
     notice: String,
-    busy: bool,
+    operation: Operation,
     blocked: bool,
     biometric: bool,
     clipboard: Option<(Zeroizing<String>, String, SystemTime)>,
@@ -253,12 +274,10 @@ pub struct Latch {
     providers: Vec<vault::alias::AliasProviderInfo>,
     default_provider: Option<String>,
     provider: String,
-    draft_alias_provider: Option<String>,
     generated: Zeroizing<String>,
     generator_options: PasswordOptions,
     generator_return: Page,
     update: Option<cargo_packager_updater::Update>,
-    installing: bool,
 }
 impl Latch {
     fn auth_state(storage: &VaultStorage) -> (Page, String, bool, bool) {
@@ -321,11 +340,11 @@ impl Latch {
             favicon_cancel: tokio::sync::watch::channel(()).0,
             selected: 0,
             scroll: ScrollHandle::new(),
-            editing: None,
+            draft: Draft::default(),
             detail: None,
             reveal_until: None,
             notice,
-            busy: false,
+            operation: Operation::Idle,
             blocked,
             biometric,
             clipboard: None,
@@ -339,15 +358,15 @@ impl Latch {
             providers: Vec::new(),
             default_provider: None,
             provider: String::new(),
-            draft_alias_provider: None,
             generated: Zeroizing::new(String::new()),
             generator_options: PasswordOptions::default(),
             generator_return: Page::Browse,
             update: None,
-            installing: false,
         };
         cx.observe(&this.query, |this, query, cx| {
-            if this.page == Page::Browse && !this.busy && this.last_query != query.read(cx).value()
+            if this.page == Page::Browse
+                && !this.busy()
+                && this.last_query != query.read(cx).value()
             {
                 this.selected = 0;
                 this.search(query.read(cx).value().to_owned(), cx);
@@ -457,15 +476,24 @@ impl Latch {
                 .unwrap_or_default(),
         )
     }
+    fn busy(&self) -> bool {
+        self.operation != Operation::Idle
+    }
+    /// Forgets the viewed Credential, the draft, and its fields.
+    fn close_credential(&mut self) {
+        self.fields.clear();
+        self.detail = None;
+        self.draft = Draft::default();
+    }
     fn work(
         &mut self,
         cx: &mut Context<Self>,
         operation: impl FnOnce(&mut VaultCoordinator) -> Result<Reply, String> + Send + 'static,
     ) {
-        if self.busy {
+        if self.busy() {
             return;
         }
-        self.busy = true;
+        self.operation = Operation::Working;
         self.notice.clear();
         let vault = self.vault.clone();
         let epoch = self.epoch.clone();
@@ -493,7 +521,7 @@ impl Latch {
                 if this.epoch.load(Ordering::SeqCst) != generation {
                     return;
                 }
-                this.busy = false;
+                this.operation = Operation::Idle;
                 let previous_page = this.page.clone();
                 match result {
                     Ok(Reply::Browse(entries)) => {
@@ -517,9 +545,7 @@ impl Latch {
                         this.page = Page::Details;
                     }
                     Ok(Reply::Saved) => {
-                        this.fields.clear();
-                        this.detail = None;
-                        this.editing = None;
+                        this.close_credential();
                         this.page = Page::Browse;
                         this.search(this.query.read(cx).value().to_owned(), cx);
                         this.notice = "Saved to encrypted vault".into();
@@ -783,16 +809,15 @@ impl Latch {
             .and_then(|mut vault| {
                 vault
                     .with_vault(|_, workspace| {
-                        let had = workspace.is_unlocked();
                         if let Some(id) = workspace.session_id() {
                             workspace.expire_session(id, SystemTime::now());
                         }
-                        Ok(had && !workspace.is_unlocked())
+                        Ok(!workspace.is_unlocked())
                     })
                     .ok()
             })
             .unwrap_or(false);
-        if expired {
+        if expired && !matches!(self.page, Page::Locked | Page::Setup) {
             self.lock(window, cx);
             self.notice = "Locked after 30 minutes of inactivity".into();
         }
@@ -830,31 +855,36 @@ impl Latch {
         self.reveal_until = None;
         let was_setup = self.page == Page::Setup;
         self.epoch.fetch_add(1, Ordering::SeqCst);
-        self.busy = true;
-        self.fields.clear();
+        if self.operation != Operation::Installing {
+            self.operation = Operation::Locking;
+        }
+        self.close_credential();
         self.previews.clear();
         self.favicon_cancel.send_replace(());
         self.favicons.clear();
         self.favicon_requests = 0;
-        self.detail = None;
-        self.editing = None;
         self.issues.clear();
         self.breaches.clear();
         self.providers.clear();
         self.default_provider = None;
-        self.draft_alias_provider = None;
         self.generated = Zeroizing::new(String::new());
         self.clear_clipboard(cx);
         let vault = self.vault.clone();
+        let epoch = self.epoch.clone();
         let generation = self.epoch.load(Ordering::SeqCst);
         let task = cx.background_executor().spawn(async move {
-            vault
+            let mut vault = vault
                 .lock()
-                .map_err(|_| "Vault service unavailable".to_owned())?
-                .with_vault(|storage, workspace| {
-                    workspace.lock();
-                    Ok(Self::auth_state(storage))
-                })
+                .map_err(|_| "Vault service unavailable".to_owned())?;
+            // Mutex acquisition can reorder locks; a retired lock must not
+            // clear a Session opened after the newest lock completed.
+            if epoch.load(Ordering::SeqCst) != generation {
+                return Err("Operation canceled".into());
+            }
+            vault.with_vault(|storage, workspace| {
+                workspace.lock();
+                Ok(Self::auth_state(storage))
+            })
         });
         cx.spawn_in(window, async move |view, cx| {
             let result = task.await;
@@ -862,7 +892,9 @@ impl Latch {
                 if this.epoch.load(Ordering::SeqCst) != generation {
                     return;
                 }
-                this.busy = this.installing;
+                if this.operation == Operation::Locking {
+                    this.operation = Operation::Idle;
+                }
                 match result {
                     Ok((page, notice, blocked, biometric)) => {
                         if page != Page::Setup {
@@ -1101,23 +1133,20 @@ impl Latch {
         });
     }
     fn add(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if matches!(self.page, Page::Locked | Page::Setup) || self.busy {
+        if matches!(self.page, Page::Locked | Page::Setup) || self.busy() {
             return;
         }
         if self.guard_draft(window, cx) {
             return;
         }
-        self.detail = None;
-        self.editing = None;
         self.form(None, window, cx);
     }
+    /// Opens the Edit page on `entry`, or on a new Credential. The draft is
+    /// replaced wholesale, so no earlier Credential identity survives.
     fn form(&mut self, entry: Option<Entry>, window: &mut Window, cx: &mut Context<Self>) {
+        self.close_credential();
         self.page = Page::Edit;
-        self.fields.clear();
         self.notice.clear();
-        self.draft_alias_provider = entry
-            .as_ref()
-            .and_then(|entry| entry.alias_provider_id.clone());
         for (label, secret) in [
             ("Title", false),
             ("Username", false),
@@ -1128,7 +1157,13 @@ impl Latch {
             self.field(label, secret, cx);
         }
         if let Some(entry) = entry {
-            self.editing = Some(entry.id.clone());
+            self.draft = Draft {
+                id: Some(entry.id.clone()),
+                alias: entry
+                    .alias_provider_id
+                    .clone()
+                    .map(|provider| (provider, Zeroizing::new(entry.username.clone()))),
+            };
             for (field, value) in self.fields.iter().zip([
                 entry.title.clone(),
                 entry.username.clone(),
@@ -1143,7 +1178,7 @@ impl Latch {
         cx.notify();
     }
     fn edit(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if self.busy
+        if self.busy()
             || matches!(self.page, Page::Locked | Page::Setup)
             || self.guard_draft(window, cx)
         {
@@ -1164,7 +1199,7 @@ impl Latch {
         }
     }
     fn submit(&mut self, _: &Submit, window: &mut Window, cx: &mut Context<Self>) {
-        if self.busy {
+        if self.busy() {
             return;
         }
         let composing = match self.page {
@@ -1250,19 +1285,26 @@ impl Latch {
                 });
             }
             Page::Edit => {
-                let editing = self.editing.is_some();
+                let editing = self.draft.id.is_some();
+                let username = self.value(1, cx).to_string();
                 let entry = Entry {
                     id: self
-                        .editing
+                        .draft
+                        .id
                         .clone()
                         .unwrap_or_else(|| uuid::Uuid::new_v4().to_string()),
                     title: self.value(0, cx).to_string(),
-                    username: self.value(1, cx).to_string(),
+                    alias_provider_id: self
+                        .draft
+                        .alias
+                        .as_ref()
+                        .filter(|(_, alias)| alias.as_str() == username)
+                        .map(|(provider, _)| provider.clone()),
+                    username,
                     password: self.value(2, cx).to_string(),
                     url: Some(self.value(3, cx).to_string()).filter(|value| !value.is_empty()),
                     icon_url: None,
                     totp_secret: Some(self.value(4, cx).to_string()),
-                    alias_provider_id: self.draft_alias_provider.clone(),
                 };
                 self.work(cx, move |vault| {
                     vault.with_vault(|storage, workspace| {
@@ -1311,10 +1353,7 @@ impl Latch {
             Page::Preview => self.apply_appearance(window, cx),
             Page::Discard => {
                 self.page = Page::Browse;
-                self.fields.clear();
-                self.detail = None;
-                self.editing = None;
-                self.draft_alias_provider = None;
+                self.close_credential();
                 window.focus(&self.query.read(cx).focus_handle(cx), cx);
                 self.search(self.query.read(cx).value().to_owned(), cx);
             }
@@ -1355,7 +1394,7 @@ impl Latch {
         cx.notify();
     }
     fn back(&mut self, _: &Back, window: &mut Window, cx: &mut Context<Self>) {
-        if self.busy {
+        if self.busy() {
             return;
         }
         if matches!(self.page, Page::Locked | Page::Setup) {
@@ -1417,9 +1456,7 @@ impl Latch {
             cx.notify();
             return;
         }
-        self.fields.clear();
-        self.detail = None;
-        self.editing = None;
+        self.close_credential();
         self.notice.clear();
         self.page = Page::Browse;
         window.focus(&self.query.read(cx).focus_handle(cx), cx);
@@ -1427,7 +1464,7 @@ impl Latch {
         cx.notify();
     }
     fn settings(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if self.busy || self.guard_draft(window, cx) {
+        if self.busy() || self.guard_draft(window, cx) {
             return;
         }
         if !matches!(self.page, Page::Locked | Page::Setup) {
@@ -1437,10 +1474,10 @@ impl Latch {
         }
     }
     fn check_updates(&mut self, cx: &mut Context<Self>) {
-        if self.busy {
+        if self.busy() {
             return;
         }
-        self.busy = true;
+        self.operation = Operation::Working;
         self.notice = "Checking native updates...".into();
         let epoch = self.epoch.load(Ordering::SeqCst);
         let task = cx
@@ -1450,7 +1487,7 @@ impl Latch {
             let result = task.await;
             let _ = view.update(cx, |this, cx| {
                 if this.epoch.load(Ordering::SeqCst) != epoch { return; }
-                this.busy = false;
+                this.operation = Operation::Idle;
                 match result {
                     Ok(Some(update)) => { this.notice = format!("Native update {} available. Installation locks the vault and exits Latch.", update.version); this.update = Some(update); },
                     Ok(None) => { this.update = None; this.notice = "You are using the latest published native release.".into(); },
@@ -1462,12 +1499,14 @@ impl Latch {
         cx.notify();
     }
     fn install_update(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.busy() {
+            return;
+        }
         let Some(update) = self.update.take() else {
             return;
         };
-        self.installing = true;
+        self.operation = Operation::Installing;
         self.lock(window, cx);
-        self.busy = true;
         self.notice = "Downloading and verifying the signed update...".into();
         let vault = self.vault.clone();
         let task = cx.background_executor().spawn(async move {
@@ -1483,20 +1522,22 @@ impl Latch {
                 .download_and_install()
                 .map_err(|error| format!("Update rejected or installation failed: {error}"))
         });
-        cx.spawn(async move |view, cx| {
+        cx.spawn_in(window, async move |view, cx| {
             let result = task.await;
-            let _ = view.update(cx, |this, cx| {
-                this.installing = false;
-                this.busy = false;
-                match result {
-                    Ok(()) => cx.quit(),
-                    Err(error) => this.notice = error,
-                }
-                cx.notify();
+            let _ = view.update_in(cx, |this, window, cx| match result {
+                Ok(()) => cx.quit(),
+                Err(error) => this.install_failed(error, window, cx),
             });
         })
         .detach();
         cx.notify();
+    }
+    /// A failed install relocks rather than going Idle, so a lock still in
+    /// flight is never outrun: the newest lock's completion ends the wait.
+    fn install_failed(&mut self, error: String, window: &mut Window, cx: &mut Context<Self>) {
+        self.operation = Operation::Idle;
+        self.lock(window, cx);
+        self.notice = error;
     }
     fn guard_draft(&mut self, window: &mut Window, cx: &mut Context<Self>) -> bool {
         if self.page == Page::Discard {
@@ -1541,10 +1582,10 @@ impl Latch {
         });
     }
     fn check_breaches(&mut self, cx: &mut Context<Self>) {
-        if self.busy {
+        if self.busy() {
             return;
         }
-        self.busy = true;
+        self.operation = Operation::Working;
         self.notice = "Checking password hash prefixes with Have I Been Pwned...".into();
         let vault = self.vault.clone();
         let epoch = self.epoch.load(Ordering::SeqCst);
@@ -1566,7 +1607,7 @@ impl Latch {
             let result = task.await;
             view.update(cx,|this,cx| {
                 if this.epoch.load(Ordering::SeqCst) != epoch { return; }
-                this.busy = false;
+                this.operation = Operation::Idle;
                 match result {
                     Ok((breached,unavailable)) => {
                         this.breaches = breached.into_iter().map(|entry| (entry.entry_id,format!("{}: found in {} breaches",entry.title,entry.breach_count))).collect();
@@ -1600,10 +1641,10 @@ impl Latch {
         cx.notify();
     }
     fn generate_alias(&mut self, cx: &mut Context<Self>) {
-        if self.busy || self.page != Page::Edit {
+        if self.busy() || self.page != Page::Edit {
             return;
         }
-        self.busy = true;
+        self.operation = Operation::Working;
         let vault = self.vault.clone();
         let epoch = self.epoch.load(Ordering::SeqCst);
         let task = cx.background_executor().spawn(async move {
@@ -1626,11 +1667,11 @@ impl Latch {
                 if this.epoch.load(Ordering::SeqCst) != epoch {
                     return;
                 }
-                this.busy = false;
+                this.operation = Operation::Idle;
                 match result {
                     Ok((email, provider)) if this.page == Page::Edit => {
-                        this.fields[1].update(cx, |field, cx| field.set_value(email, cx));
-                        this.draft_alias_provider = Some(provider);
+                        this.fields[1].update(cx, |field, cx| field.set_value(email.clone(), cx));
+                        this.draft.alias = Some((provider, Zeroizing::new(email)));
                         this.notice = "Alias added to your draft".into();
                     }
                     Ok(_) => {}
@@ -1665,8 +1706,6 @@ impl Latch {
         }
         let password = self.generated.to_string();
         if self.generator_return != Page::Edit {
-            self.detail = None;
-            self.editing = None;
             self.form(None, window, cx);
         } else {
             self.page = Page::Edit;
@@ -1733,7 +1772,7 @@ impl Latch {
             .relative()
             .child(self.reveal(stop))
             .accessibility_label(label.clone())
-            .disabled(self.busy)
+            .disabled(self.busy())
             .h(px(28.))
             .px(px(12.))
             .gap(px(6.))
@@ -1793,6 +1832,114 @@ mod tests {
     use super::{Latch, Page, Submit};
     use gpui_kit::{Focusable, TestAppContext};
     use latch_core::vault::storage::VaultStorage;
+
+    #[gpui_kit::test]
+    fn tick_clears_ui_secrets_when_the_workspace_was_already_locked(cx: &mut TestAppContext) {
+        let directory = tempfile::tempdir().unwrap();
+        cx.update(gpui_kit::init);
+        let window = cx.add_window(|window, cx| {
+            Latch::new(
+                VaultStorage {
+                    path: directory.path().join("vault.enc"),
+                },
+                window,
+                cx,
+            )
+        });
+        window
+            .update(cx, |this, window, cx| {
+                this.vault
+                    .lock()
+                    .unwrap()
+                    .with_vault(|storage, workspace| {
+                        latch_core::vault::provision::provision(
+                            storage,
+                            workspace,
+                            &[7; 32],
+                            latch_core::auth::method::AuthMethod::Password,
+                            &hex::encode([8; 32]),
+                        )
+                    })
+                    .unwrap();
+                this.page = Page::Browse;
+                this.form(None, window, cx);
+                this.fields[2].update(cx, |field, cx| field.set_value("draft secret".into(), cx));
+                this.copy(zeroize::Zeroizing::new("copied secret".into()), cx);
+                // A core operation can expire the Session before the UI timer observes it.
+                this.vault
+                    .lock()
+                    .unwrap()
+                    .with_vault(|_, workspace| {
+                        let generation = workspace.session_id().unwrap();
+                        workspace.expire_session(
+                            generation,
+                            std::time::SystemTime::now()
+                                + std::time::Duration::from_secs(
+                                    latch_core::vault::SESSION_TIMEOUT_SECS + 1,
+                                ),
+                        );
+                        Ok(())
+                    })
+                    .unwrap();
+                this.tick(window, cx);
+                assert_eq!(this.page, Page::Locked);
+                assert!(this.clipboard.is_none());
+                assert!(
+                    this.fields
+                        .iter()
+                        .all(|field| field.read(cx).value().is_empty())
+                );
+                assert!(this.detail.is_none() && this.draft.id.is_none());
+            })
+            .unwrap();
+        cx.run_until_parked();
+    }
+
+    #[gpui_kit::test]
+    fn a_stale_lock_task_cannot_lock_a_later_session(cx: &mut TestAppContext) {
+        let directory = tempfile::tempdir().unwrap();
+        cx.update(gpui_kit::init);
+        let window = cx.add_window(|window, cx| {
+            Latch::new(
+                VaultStorage {
+                    path: directory.path().join("vault.enc"),
+                },
+                window,
+                cx,
+            )
+        });
+        window
+            .update(cx, |this, window, cx| {
+                this.lock(window, cx);
+                // A later lock and Access can win the mutex before this queued lock.
+                this.epoch.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                this.vault
+                    .lock()
+                    .unwrap()
+                    .with_vault(|_, workspace| {
+                        workspace.start([8; 32]);
+                        Ok(())
+                    })
+                    .unwrap();
+                this.operation = super::Operation::Idle;
+                this.page = Page::Browse;
+            })
+            .unwrap();
+        cx.run_until_parked();
+        window
+            .update(cx, |this, _, _| {
+                assert!(
+                    this.vault
+                        .lock()
+                        .unwrap()
+                        .with_vault(|_, workspace| Ok(workspace.is_unlocked()))
+                        .unwrap(),
+                    "a retired lock must not affect the current Session"
+                );
+                assert_eq!(this.page, Page::Browse);
+            })
+            .unwrap();
+    }
 
     #[gpui_kit::test]
     fn locking_cancels_and_discards_pending_favicons(cx: &mut TestAppContext) {
@@ -1938,7 +2085,7 @@ mod tests {
                 assert_eq!(this.page, Page::Locked);
                 assert!(!this.biometric, "the committed vault requires a password");
                 assert!(!this.blocked);
-                assert!(!this.busy);
+                assert!(!this.busy());
                 assert_eq!(this.fields.len(), 1);
                 this.fields[0].update(cx, |field, cx| {
                     field.set_value("a new test master password".into(), cx)
@@ -2012,33 +2159,25 @@ mod tests {
                 "{}",
                 view.read(cx).notice
             );
-            view.read(cx)
-                .vault
-                .lock()
-                .unwrap()
-                .with_vault(|_, workspace| {
-                    workspace.session_start =
-                        Some(std::time::SystemTime::now() - std::time::Duration::from_secs(60));
-                    Ok(())
-                })
-                .unwrap();
             window.draw(cx).clear(cx);
         });
+        let last_activity = |cx: &mut gpui_kit::VisualTestContext| {
+            cx.update(|_, cx| {
+                view.read(cx)
+                    .vault
+                    .lock()
+                    .unwrap()
+                    .with_vault(|_, workspace| Ok(workspace.last_activity()))
+                    .unwrap()
+                    .expect("an unlocked Workspace has a Session")
+            })
+        };
+        let before = last_activity(cx);
         cx.simulate_keystrokes("tab");
-        cx.update(|_, cx| {
-            view.read(cx)
-                .vault
-                .lock()
-                .unwrap()
-                .with_vault(|_, workspace| {
-                    assert!(
-                        workspace.session_start.unwrap().elapsed().unwrap()
-                            < std::time::Duration::from_secs(5)
-                    );
-                    Ok(())
-                })
-                .unwrap();
-        });
+        assert!(
+            last_activity(cx) > before,
+            "a keystroke refreshes Session activity"
+        );
         cx.simulate_keystrokes("ctrl-k");
         cx.update(|window, cx| {
             assert!(view.read(cx).page == Page::Actions);
@@ -2525,6 +2664,157 @@ mod tests {
                 Some("Bravo secret")
             );
         });
+    }
+
+    #[gpui_kit::test]
+    fn alias_provenance_is_saved_only_while_the_username_matches(cx: &mut TestAppContext) {
+        let directory = tempfile::tempdir().unwrap();
+        cx.update(|cx| {
+            gpui_kit::init(cx);
+            super::init(cx);
+            crate::input::init(cx);
+        });
+        let window = cx.add_window(|window, cx| {
+            Latch::new(
+                VaultStorage {
+                    path: directory.path().join("vault.enc"),
+                },
+                window,
+                cx,
+            )
+        });
+        window
+            .update(cx, |this, window, cx| {
+                for field in &this.fields {
+                    field.update(cx, |field, cx| {
+                        field.set_value("a long test master password".into(), cx)
+                    });
+                }
+                this.submit(&Submit, window, cx);
+            })
+            .unwrap();
+        cx.run_until_parked();
+        // An alias fills the username; "Typed" then overwrites it by hand.
+        for (title, username) in [("Kept", "alias@x.invalid"), ("Typed", "me@x.invalid")] {
+            window
+                .update(cx, |this, window, cx| {
+                    this.add(window, cx);
+                    this.draft.alias =
+                        Some(("simplelogin".into(), "alias@x.invalid".to_string().into()));
+                    for (field, value) in this.fields.iter().zip([title, username, "secret"]) {
+                        field.update(cx, |field, cx| field.set_value(value.into(), cx));
+                    }
+                    this.submit(&Submit, window, cx);
+                })
+                .unwrap();
+            cx.run_until_parked();
+        }
+        let provider = |this: &Latch, title: &str| {
+            this.vault
+                .lock()
+                .unwrap()
+                .with_vault(|_, workspace| {
+                    Ok(workspace
+                        .credentials
+                        .iter()
+                        .find(|credential| credential.title == title)
+                        .unwrap()
+                        .alias_provider_id
+                        .clone())
+                })
+                .unwrap()
+        };
+        window
+            .update(cx, |this, window, cx| {
+                assert_eq!(provider(this, "Kept").as_deref(), Some("simplelogin"));
+                assert_eq!(provider(this, "Typed"), None);
+                // Editing keeps provenance until the username changes.
+                let entry = this
+                    .vault
+                    .lock()
+                    .unwrap()
+                    .with_vault(|_, workspace| {
+                        let id = workspace
+                            .credentials
+                            .iter()
+                            .find(|c| c.title == "Kept")
+                            .unwrap()
+                            .id
+                            .clone();
+                        latch_core::vault::entries::get_full(workspace, &id)
+                    })
+                    .unwrap();
+                this.form(Some(entry), window, cx);
+                this.fields[1].update(cx, |field, cx| field.set_value("me@x.invalid".into(), cx));
+                this.submit(&Submit, window, cx);
+            })
+            .unwrap();
+        cx.run_until_parked();
+        window
+            .update(cx, |this, window, cx| {
+                assert_eq!(provider(this, "Kept"), None);
+                // A discarded draft takes its alias with it.
+                this.add(window, cx);
+                this.draft.alias =
+                    Some(("simplelogin".into(), "alias@x.invalid".to_string().into()));
+                this.fields[0].update(cx, |field, cx| field.set_value("Draft".into(), cx));
+                this.back(&super::Back, window, cx);
+                this.submit(&Submit, window, cx);
+                assert_eq!(this.page, Page::Browse);
+                assert!(this.draft.alias.is_none() && this.draft.id.is_none());
+            })
+            .unwrap();
+    }
+
+    #[gpui_kit::test]
+    fn failed_install_stays_busy_until_the_newest_lock_lands(cx: &mut TestAppContext) {
+        use super::Operation;
+        let directory = tempfile::tempdir().unwrap();
+        let storage = VaultStorage {
+            path: directory.path().join("vault.enc"),
+        };
+        latch_core::vault::provision::provision(
+            &storage,
+            &mut latch_core::vault::workspace::Workspace::new(),
+            &[7; 32],
+            latch_core::auth::method::AuthMethod::Password,
+            "00",
+        )
+        .unwrap();
+        cx.update(gpui_kit::init);
+        let window = cx.add_window(|window, cx| Latch::new(storage, window, cx));
+        window
+            .update(cx, |this, window, cx| {
+                // install_update's own lock, plus a tray lock during the download.
+                this.operation = Operation::Installing;
+                this.lock(window, cx);
+                this.lock(window, cx);
+                assert_eq!(this.operation, Operation::Installing);
+            })
+            .unwrap();
+        cx.run_until_parked();
+        window
+            .update(cx, |this, window, cx| {
+                assert_eq!(
+                    this.operation,
+                    Operation::Installing,
+                    "a lock completing mid-install must not re-enable input"
+                );
+                // Another lock is in flight when the install fails.
+                this.lock(window, cx);
+                this.install_failed("Update rejected".into(), window, cx);
+                assert!(this.busy(), "Access must wait for the pending lock to land");
+            })
+            .unwrap();
+        cx.run_until_parked();
+        window
+            .update(cx, |this, _, _| {
+                assert_eq!(this.operation, Operation::Idle);
+                assert_eq!(this.page, Page::Locked);
+                assert_eq!(this.notice, "Update rejected");
+                assert_eq!(this.fields.len(), 1);
+            })
+            .unwrap();
     }
 }
 #[cfg(test)]

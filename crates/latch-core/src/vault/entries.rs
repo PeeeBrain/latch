@@ -308,13 +308,15 @@ mod tests {
     #[test]
     fn get_full_rejects_expired_session() {
         let mut workspace = unlocked_workspace();
-        workspace.session_start =
-            Some(SystemTime::now() - Duration::from_secs(super::super::SESSION_TIMEOUT_SECS + 1));
+        workspace.start_at(
+            [7; 32],
+            SystemTime::now() - Duration::from_secs(super::super::SESSION_TIMEOUT_SECS + 1),
+        );
 
         let result = get_full(&mut workspace, "entry-1");
 
         assert_eq!(result.unwrap_err(), "Session expired");
-        assert!(workspace.session_key.is_none());
+        assert!(!workspace.is_unlocked());
         assert!(workspace.credentials.is_empty());
     }
 

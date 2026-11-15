@@ -147,7 +147,7 @@ impl Latch {
             .relative()
             .child(self.reveal(stop))
             .accessibility_label(label)
-            .disabled(self.busy && self.page != Page::Browse)
+            .disabled(self.busy() && self.page != Page::Browse)
             .w_full()
             .h(px(ui::ROW))
             .flex_shrink_0()
@@ -270,7 +270,7 @@ impl Latch {
         gpui_kit::base::Button::new("back")
             .accessibility_label("Back")
             .tab_stop(false)
-            .disabled(self.busy)
+            .disabled(self.busy())
             .size(px(26.))
             .flex_shrink_0()
             .rounded(px(6.))
@@ -368,7 +368,7 @@ impl Latch {
 
     fn footer(&self, p: &Palette, window: &Window, cx: &mut Context<Self>) -> gpui_kit::Div {
         let auth = matches!(self.page, Page::Locked | Page::Setup);
-        let status: Option<(Icon, String)> = if self.busy {
+        let status: Option<(Icon, String)> = if self.busy() {
             Some((Icon::RefreshCw, "Working…".into()))
         } else if !self.notice.is_empty()
             && !matches!(
@@ -489,7 +489,7 @@ impl Latch {
                     link("actions")
                         .text_color(p.color(Color::Muted))
                         .on_click(cx.listener(|this, _, window, cx| {
-                            if !this.busy && !this.guard_draft(window, cx) {
+                            if !this.busy() && !this.guard_draft(window, cx) {
                                 this.open_actions(window, cx);
                             }
                         }))
@@ -1843,7 +1843,7 @@ impl Render for Latch {
             Page::Browse | Page::Actions => "Latch",
             Page::Details => "Credential",
             Page::Edit => {
-                if self.editing.is_some() {
+                if self.draft.id.is_some() {
                     "Edit credential"
                 } else {
                     "New credential"
@@ -1980,7 +1980,7 @@ impl Render for Latch {
                 if this.page == Page::Actions {
                     this.back(&Back, window, cx);
                 } else if !matches!(this.page, Page::Locked | Page::Setup)
-                    && !this.busy
+                    && !this.busy()
                     && !this.guard_draft(window, cx)
                 {
                     this.open_actions(window, cx);

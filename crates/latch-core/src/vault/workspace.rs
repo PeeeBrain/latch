@@ -2,14 +2,18 @@ use super::{storage::VaultStorage, AliasConfig, Entry, VaultData, SESSION_TIMEOU
 use crate::crypto::aead;
 use std::time::{Duration, SystemTime};
 use tokio::sync::watch;
-use zeroize::{Zeroize, Zeroizing};
+use zeroize::Zeroizing;
+
+struct Session {
+    key: Zeroizing<[u8; 32]>,
+    last_activity: SystemTime,
+}
 
 pub struct Workspace {
     pub credentials: Vec<Entry>,
     pub alias_configs: Vec<AliasConfig>,
     pub default_provider_id: Option<String>,
-    pub session_key: Option<zeroize::Zeroizing<[u8; 32]>>,
-    pub session_start: Option<SystemTime>,
+    session: Option<Session>,
     session_generation: u64,
     alias_cancel: watch::Sender<bool>,
 }
@@ -21,8 +25,7 @@ impl Workspace {
             credentials: Vec::new(),
             alias_configs: Vec::new(),
             default_provider_id: None,
-            session_key: None,
-            session_start: None,
+            session: None,
             session_generation: 0,
             alias_cancel,
         }
@@ -33,7 +36,11 @@ impl Workspace {
     }
 
     pub fn is_unlocked(&self) -> bool {
-        self.session_key.is_some()
+        self.session.is_some()
+    }
+
+    pub fn last_activity(&self) -> Option<SystemTime> {
+        self.session.as_ref().map(|session| session.last_activity)
     }
 
     pub fn check_session(&mut self) -> Result<(), String> {
@@ -61,7 +68,7 @@ impl Workspace {
             return None;
         }
         let remaining = self
-            .session_start
+            .last_activity()
             .and_then(|start| now.duration_since(start).ok())
             .and_then(|elapsed| Duration::from_secs(SESSION_TIMEOUT_SECS).checked_sub(elapsed))
             .unwrap_or(Duration::ZERO);
@@ -72,17 +79,19 @@ impl Workspace {
     }
 
     pub fn refresh(&mut self) {
-        self.session_start = Some(SystemTime::now());
+        if let Some(session) = &mut self.session {
+            session.last_activity = SystemTime::now();
+        }
     }
 
     pub(crate) fn persist(&self, storage: &VaultStorage) -> Result<(), String> {
-        let key = self.session_key.as_ref().ok_or("Vault is locked")?;
+        let session = self.session.as_ref().ok_or("Vault is locked")?;
         let vault_data = VaultData::from_workspace(self);
         let json = Zeroizing::new(
             serde_json::to_string(&vault_data)
                 .map_err(|e| format!("Failed to serialize: {}", e))?,
         );
-        let encrypted = aead::encrypt(key, &json)?;
+        let encrypted = aead::encrypt(&session.key, &json)?;
 
         let mut vault = storage.read()?;
         vault.data = encrypted;
@@ -90,11 +99,8 @@ impl Workspace {
     }
 
     pub fn lock(&mut self) {
-        if let Some(ref mut key) = self.session_key {
-            key.zeroize();
-        }
-        self.session_key = None;
-        self.session_start = None;
+        // Dropping the Session zeroizes its key before clearing the Workspace.
+        self.session = None;
         self.credentials.clear();
         self.alias_configs.clear();
         self.default_provider_id = None;
@@ -102,9 +108,15 @@ impl Workspace {
     }
 
     pub fn start(&mut self, key: [u8; 32]) {
+        self.start_at(key, SystemTime::now());
+    }
+
+    pub(crate) fn start_at(&mut self, key: [u8; 32], last_activity: SystemTime) {
         self.session_generation = self.session_generation.wrapping_add(1);
-        self.session_key = Some(zeroize::Zeroizing::new(key));
-        self.session_start = Some(SystemTime::now());
+        self.session = Some(Session {
+            key: Zeroizing::new(key),
+            last_activity,
+        });
         self.alias_cancel.send_replace(false);
     }
 }
@@ -118,6 +130,20 @@ impl Default for Workspace {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn refreshing_a_locked_workspace_cannot_create_a_session() {
+        let mut workspace = Workspace::new();
+        workspace.refresh();
+        assert_eq!(workspace.last_activity(), None);
+        assert_eq!(workspace.session_id(), None);
+
+        workspace.start([1; 32]);
+        workspace.lock();
+        workspace.refresh();
+        assert_eq!(workspace.last_activity(), None);
+        assert_eq!(workspace.session_id(), None);
+    }
 
     #[tokio::test]
     async fn locking_the_vault_cancels_pending_alias_requests() {
@@ -160,8 +186,8 @@ mod tests {
             alias_provider_id: None,
         });
         let first_session = workspace.session_id().unwrap();
-        let start = workspace.session_start.unwrap();
-        workspace.session_start = Some(start + Duration::from_secs(60));
+        let start = workspace.last_activity().unwrap();
+        workspace.session.as_mut().unwrap().last_activity = start + Duration::from_secs(60);
 
         assert_eq!(
             workspace.expire_session(first_session, start + Duration::from_secs(1800)),
@@ -172,7 +198,7 @@ mod tests {
             workspace.expire_session(first_session, start + Duration::from_secs(1860)),
             Some(Duration::ZERO)
         );
-        assert!(workspace.session_key.is_none());
+        assert!(workspace.session.is_none());
         assert!(workspace.credentials.is_empty());
 
         workspace.start([2; 32]);
@@ -188,7 +214,7 @@ mod tests {
         let mut workspace = Workspace::new();
         workspace.start([1; 32]);
         let generation = workspace.session_id().unwrap();
-        let before_activity = workspace.session_start.unwrap() - Duration::from_secs(1);
+        let before_activity = workspace.last_activity().unwrap() - Duration::from_secs(1);
 
         assert_eq!(
             workspace.expire_session(generation, before_activity),
@@ -206,14 +232,14 @@ mod tests {
         let mut workspace = Workspace::new();
         workspace.start([1; 32]);
         let previous = SystemTime::now() - Duration::from_secs(1);
-        workspace.session_start = Some(previous);
+        workspace.session.as_mut().unwrap().last_activity = previous;
 
         workspace.check_and_refresh().unwrap();
 
-        assert!(workspace.session_start.unwrap() > previous);
+        assert!(workspace.last_activity().unwrap() > previous);
 
-        workspace.session_start =
-            Some(SystemTime::now() - Duration::from_secs(SESSION_TIMEOUT_SECS + 1));
+        workspace.session.as_mut().unwrap().last_activity =
+            SystemTime::now() - Duration::from_secs(SESSION_TIMEOUT_SECS + 1);
         assert_eq!(
             workspace.check_and_refresh().unwrap_err(),
             "Session expired"

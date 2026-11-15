@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- Clear displayed Credential drafts and the clipboard when the Session has already expired in a background operation.
+- Keep unlock blocked after a failed update installation until the pending lock completes.
+- Ignore older queued lock tasks after a later lock and unlock, so they cannot close the new Session.
+- Clear the alias provider association when a Credential's generated username is replaced by hand.
+
 ## [0.3.5] - 2026-11-12
 
 ### Added
